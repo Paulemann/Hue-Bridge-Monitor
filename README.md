@@ -9,4 +9,4 @@ Luckily, the V2 of the Hue API provides a method to listen to events received at
 
 Instead of sending an alert message instantly after motion was detected, I've decided to collect the data and send a daily report as I sometimes rent the cottage to friends and guests which would lead to lots of false alerts. I'm still thinking of an elegant way to switch between instant allerting and data collection mode (or a combination of both). Also, to avoid frequent data transmission over the broadband connection, I've positioned the raspberry pi next to the Hue bridge in the cottage.
 
-Currently, this python scipt is considered as a draft. If you'd like to use it for your own purposes, you'll have to customize a few settings in the code itself. Outputs are in German language but can be customized as well by tranlating the global string variables to the language of your choice.
+Currently, this python script is considered as a draft. If you'd like to use it for your own purposes, you'll have to customize a few settings in the code itself. Outputs are in German language but can be customized as well by tranlating the global string variables to the language of your choice.
