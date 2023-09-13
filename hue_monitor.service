@@ -1,0 +1,16 @@
+
+[Unit]
+Description=Philips Hue Monitor Service
+After=multi-user.target
+
+[Service]
+Type=idle
+Restart=on-failure
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 -u /home/pi/hue_monitor.py
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=hue_monitor
+
+[Install]
+WantedBy=multi-user.target
