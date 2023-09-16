@@ -1,0 +1,33 @@
+[Hue Bridge]
+ip = 192.168.178.100
+key = abcdefghijklmnopqrstuvwxyz
+
+[Mail Account]
+server = smtp.mail.com
+port = 587
+user = user@mail.com
+name = Hue Bridge
+password = secret
+
+[Logging]
+status = Letzer Wert
+event = Neuer Wert
+
+[Messaging]
+report_subject = Täglicher Bericht - Sensordaten
+alert_subject = Bewegungsalarm
+report_text = Sensordaten vom {}
+alert_text = Am Sensor "{}" wurde um {} Uhr eine Bewegung erfasst.
+recipients = user@mail.com
+
+[Motion Alert]
+notify = on
+except = 27.08.23 16:00 - 08.09.23 10:00, 10.09.23 16:00 - 17.09.23 10:00
+except_daily = 07:00 - 22:00
+
+[Service Descriptions]
+device_power = Ladezustand der 2x AAA Batterien
+light_level = Lichtsensor
+temperature = Temperatursensor
+motion = Bewegungssensor
+

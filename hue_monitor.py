@@ -13,34 +13,35 @@ from email.message import EmailMessage
 import smtplib
 #import ssl
 
+from configparser import ConfigParser
+import os
+
+#
 # Suppress only the single warning from urllib3 needed.
+#
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-low_chr = chr(0x2581)
+low_chr  = chr(0x2581)
 high_chr = chr(0x2588)
+
+plot     = list(96*low_chr)
 timeline = (10*' ').join(['0', '03', '06', '09', '12', '15', '18', '21', '24'])
+
+date_in_format  = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 day_format      = "%d.%m.%y"
 time_format     = "%H:%M:%S"
-date_in_format  = "%Y-%m-%dT%H:%M:%S.%fZ"
 date_out_format = f"{day_format} {time_format}"
 
-#
-# Hue Bridge IP Address (required)
-#
-HueIP = "192.168.178.x"
+today = datetime.now().strftime(day_format)
 
 #
-# Hue Bridge User Name/API Key
+# Read configuration from matching ini file in current directory
 #
-# Sepcifiy if user has been already created, else set to 'None'.
-# Remeber you muss have physcal access to the Hue Bridge to create
-# a new user/API Key
-#
-HueAPIKey = "aequenceoflettersandnumbers"
+config_file = os.path.splitext(os.path.basename(__file__))[0] + '.ini'
 
 #
-# Customize service descriptions and to suit your preference/language
+# Initialize settings. Customize in config file
 #
 HueServices = [
     {
@@ -73,27 +74,118 @@ HueServices = [
     }
 ]
 
+LOGsettings = {
+    "status":     "Letzer Wert",
+    "event":      "Neuer Wert"
+}
 
-status_msg = " - Letzter Wert"
-event_msg  = " - Neuer Wert"
+SMTPsettings = {
+    "user":       "user@mail.com",
+    "name":       "Hue Bridge",
+    "password":   "password",
+    "server":     "smtp.mail.com",
+    "port":       587
+}
 
-#
-# E-Mail Settings (requires customization)
-#
-# If HueReceivers list is empty, no E-mail will be sent
-#
+HUEsettings = {
+    "ip":         "192.168.178.100",
+    "key":        None
+}
 
-HTMLtitle    = "Sensordaten vom {}"
+MOTIONsettings = {
+    "notify":       "True",
+    "except":       [],
+    "except_daily": []
+}
 
-HueSubject   = "Täglicher Bericht - Sensordaten"
-HueReceivers = [ "me@mail.com" ]
+MSGsettings = {
+    "report_subject": "Täglicher Bericht",
+    "alert_subject":  "Bewegungsalarm",
+    "report_text":    "Sensordaten vom {}",
+    "alert_text":     "Am Sensor \"{}\" wurde um {} Uhr eine Bewegung erfasst.",
+    "recipients":     []
+}
 
-SMTPuser     = "me@mail.com"
-SMTPname     = "HueBridge"
-SMTPpassword = "mypassword"
-SMTPserver   = "smtp.mail.com"
-SMTPport     = 587
 
+def read_config():
+    if not os.path.exists(config_file):
+        log(f"Could not find configuration file \"{config_file}\"")
+        return None
+
+    config = None
+
+    try:
+        config = ConfigParser()
+        config.read([os.path.abspath(config_file)])
+
+        #
+        # Customize service descriptions to suit your preference/language
+        #
+        for service in HueServices:
+            service["description"] = config.get("Service Descriptions", service["name"])
+
+        #
+        # Customize settings for logging
+        #
+        LOGsettings["status"] = config.get("Logging", "status")
+        LOGsettings["event"]  = config.get("Logging", "event")
+
+        #
+        # Mail account settings
+        #
+        SMTPsettings["user"]     = config.get("Mail Account", "user")
+        SMTPsettings["name"]     = config.get("Mail Account", "name")
+        SMTPsettings["password"] = config.get("Mail Account", "password")
+        SMTPsettings["server"]   = config.get("Mail Account", "server")
+        SMTPsettings["port"]     = config.get("Mail Account", "port")
+
+        #
+        # Hue Bridge IP and User Name/API Key
+        #
+        # Specifiy if user has been already created, else set to 'None'.
+        # Remeber you muss have physcal access to the Hue Bridge to create
+        # a new user/API Key
+        #
+        HUEsettings["ip"]  = config.get("Hue Bridge", "ip")
+        HUEsettings["key"] = config.get("Hue Bridge", "key")
+
+        #
+        # Setnotify on motion events to True if you want alert meesages on motion detection
+        # except dates specify periods when no alert is sent
+        #
+        MOTIONsettings["notify"]       = config.getboolean("Motion Alert", "notify")
+        MOTIONsettings["except"]       = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in config.get("Motion Alert", "except").split(",") if x != "" ] ] ]
+        MOTIONsettings["except_daily"] = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in config.get("Motion Alert", "except_daily").split(",") if x != "" ] ] ]
+        #
+        # except dates must be specified as comma separated intervals in the format
+        # "%d.%m.%y %H:%M:%S - %d.%m.%y %H:%M:%S" (date_out_format) in the ini file
+        # with %H, %M, or %S being optional parameters
+        #
+
+        #
+        # E-Mail Settings (requires customization)
+        # If HueReceivers list is empty, no E-mail will be sent
+        #
+        MSGsettings["report_subject"] = config.get("Messaging", "report_subject")
+        MSGsettings["alert_subject"]  = config.get("Messaging", "alert_subject")
+        MSGsettings["report_text"]    = config.get("Messaging", "report_text")
+        MSGsettings["alert_text"]     = config.get("Messaging", "alert_text")
+        MSGsettings["recipients"]     = [ r.strip() for r in config.get("Messaging", "recipients").split(',') ]
+
+    except Exception as e:
+        log(f"Error processing \"{config_file}\": {e}")
+
+    return config
+
+
+def save_key(config, key):
+    config.set("Hue Bridge", "key", key)
+
+    try:
+        with open(config_file, 'w') as configfile:
+            config.write(configfile)
+    except Exception as e:
+        log(f"Error updating \"{config_file}\": {e}")
 
 
 def log(message):
@@ -104,6 +196,40 @@ def utc2local(utc):
     epoch  = time.mktime(utc.timetuple())
     offset = datetime.fromtimestamp(epoch) - datetime.utcfromtimestamp(epoch)
     return utc + offset
+
+
+def check_date(date, interval):
+    try:
+        #compare = datetime.now()
+        compare = datetime.strptime(date, date_out_format)
+
+        for first, last in interval:
+            start = datetime.strptime(first, date_out_format[:len(first)])
+            end = datetime.strptime(last, date_out_format[:len(last)])
+
+            if start <= compare <= end:
+                return True
+    except:
+        pass
+
+    return False
+
+
+def check_daily(date, interval):
+    try:
+        #compare = datetime.now()
+        compare = datetime.strptime(date, time_format)
+
+        for first, last in interval:
+            start = datetime.strptime(first, time_format[:len(first)])
+            end = datetime.strptime(last, time_format[:len(last)])
+
+            if start <= compare <= end:
+                return True
+    except:
+        pass
+
+    return False
 
 
 def html_report(bridge, date):
@@ -126,7 +252,7 @@ def html_report(bridge, date):
 		</style>
 	</head>"""
 
-    heading = HTMLtitle.format(date)
+    heading = MSGsettings["report_text"].format(date)
     html = f"<html>{HTMLheader}\n\t<body>\n\t\t<h1>{heading}</h1>\n"
 
     for sensor in bridge.sensors:
@@ -136,6 +262,8 @@ def html_report(bridge, date):
         power_service = ([ s for s in sensor.services if s.name == "device_power" ] or [None])[0]
         if power_service:
             power_service.update()
+            log(power_service.prompt(LOGsettings["status"]))
+
             html +=  f"\t\t<p>{power_service.description}: {power_service.value}{power_service.unit}</p>\n"
 
         maxrows = 0
@@ -180,40 +308,81 @@ def html_report(bridge, date):
     return html
 
 
-def sendmail(subject, html_body, recipients):
+def sendmail(recipients, subject, msg_body, subtype=None):
     if not recipients:
         return
 
     msg = EmailMessage()
 
-    if SMTPname:
-        msg['From']  = formataddr((str(Header(SMTPname, 'utf-8')), SMTPuser))
+    if SMTPsettings["name"]:
+        msg['From']  = formataddr((str(Header(SMTPsettings["name"], 'utf-8')), SMTPsettings["user"]))
     else:
-        msg['From']  = SMTPuser
+        msg['From']  = SMTPsettings["user"]
+
     msg['To']      = ", ".join(recipients)
     msg['Subject'] = subject
 
-    msg.set_content(html_body, subtype="html")
+    if subtype == "html":
+        msg.set_content(msg_body, subtype="html")
+    else:
+        msg.set_content(msg_body)
 
     try:
         #context = ssl.create_default_context()
-        with smtplib.SMTP(SMTPserver, port=SMTPport) as server:
+        with smtplib.SMTP(SMTPsettings["server"], port=SMTPsettings["port"]) as server:
             #server.starttls(context=context)
             server.starttls()
-            server.login(SMTPuser, SMTPpassword)
-            server.sendmail(SMTPuser, recipients, msg.as_string())
+            server.login(SMTPsettings["user"], SMTPsettings["password"])
+            server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
 
-        log("Mail sent")
+        log("Mail delivery successful")
 
-    except:
-        log("Unable to send mail")
+    except Exception as e:
+        log(f"Mail delivery failed: {e}")
+
+
+def on_change(bridge, sensor, service):
+    global today, plot
+
+    # Let's see if a day has passed. It's time to send a new report then
+    date = datetime.now().strftime(day_format)
+    #date = service.changed.strftime(day_format)
+    if date != today:
+        # Plot the motion profile of the passed day
+        log(today)
+        log("".join(plot))
+        log(timeline)
+
+        # Reset the motion profile
+        plot = list(96*low_chr)
+
+        # Send the daily report
+        html = html_report(bridge, today)
+        sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
+
+        today = date
+
+    if service.name == 'motion' and service.value:
+        if MOTIONsettings["notify"]:
+            # Send alert message (if set)
+            if not check_date(service.changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_daily(service.changed.strftime(time_format), MOTIONsettings["except_daily"]):
+                sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, service.changed.strftime(time_format)))
+            else:
+                log("Mail delivery restricted")
+
+        # Update the motion profile
+        h = int(service.changed.strftime("%H"))
+        m = int(service.changed.strftime("%M"))
+        plot_index = h*4 + m//15
+        plot[plot_index] = high_chr
 
 
 class Bridge():
 
-    def __init__(self, ip_address, username=None):
+    def __init__(self, ip_address, username=None, onchange=None):
         self.ip            = ip_address
         self.username      = username or self.__username()
+        self.onchange      = onchange
 
         self.devices       = self.__devices()
         self.sensors       = [ Sensor(device["id"], device["name"], self) for device in self.devices if device["product_name"] == "Hue motion sensor" ] or None
@@ -246,7 +415,7 @@ class Bridge():
                         username = data["success"]["username"]
 
                 else:
-                    log("Invalid Response")
+                    log(f"Invalid Response from {url}")
 
             except Exception as e:
                 log(e)
@@ -272,7 +441,7 @@ class Bridge():
 
                         device_parms.append(device_parm)
             else:
-                log("Invalid Response")
+                log(f"Invalid Response from {url}")
 
         except Exception as e:
             log(e)
@@ -296,9 +465,6 @@ class Bridge():
             "Accept": "text/event-stream"
             }
 
-        today = datetime.now().strftime(day_format)
-        plot = list(96*low_chr)
-
         with requests.Session() as session:
             while(True):
                 try:
@@ -308,31 +474,6 @@ class Bridge():
                         for line in response.iter_lines():
                             if line:
                                 line = line.decode('utf-8')
-
-                                t = datetime.now().strftime(day_format)
-
-                                # Let's see if a day has passed. It's time to send a new report then
-                                if t != today:
-                                    for sensor in self.sensors:
-                                        # Once a day we must check the battery level
-                                        power_service = ([ s for s in sensor.services if s.name == "device_power" ] or [None])[0]
-                                        if power_service:
-                                            power_service.update()
-                                            log(power_service.prompt(status_msg))
-
-                                    # Plot the motion profile of the passed day
-                                    log(today)
-                                    log("".join(plot))
-                                    log(timeline)
-
-                                    # Reset the motion profile
-                                    plot = list(96*low_chr)
-
-                                    # Send the daily report
-                                    html = html_report(self, today)
-                                    sendmail(HueSubject, html, HueReceivers)
-
-                                    today = t
 
                                 if line.startswith("data:"):
                                     data = json.loads(line.split(":", 1)[1].strip())
@@ -367,23 +508,19 @@ class Bridge():
 
                                     service.update(value=value, changed=changed)
 
-                                    log(service.prompt(event_msg))
+                                    log(service.prompt(LOGsettings["event"]))
 
-                                    # If motion was detected we update the motion profile for that interval
-                                    if service.name == 'motion' and value:
-                                        h = int(changed.strftime("%H"))
-                                        m = int(changed.strftime("%M"))
-                                        plot_index = h*4 + m//15
-                                        plot[plot_index] = high_chr
+                                    if self.onchange:
+                                        self.onchange(self, sensor, service)
                     else:
-                        log("Invalid Response")
+                        log(f"Invalid Response from {url}")
 
                 except requests.exceptions.RequestException as e:
                     if "timed out" in str(e):
-                        # if the request has timed out (i.e. after a day with no events)
-                        # send a report - even if it's empty
-                        html = html_report(self, today)
-                        sendmail(HueSubject, html, HueReceivers)
+                        ## if the request has timed out (i.e. after a day with no events)
+                        ## send a report - even if it's empty
+                        #html = html_report(self, today)
+                        #sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
                         pass
                     else:
                         log(e)
@@ -432,7 +569,7 @@ class Sensor():
                         continue
 
             else:
-                log("Invalid Response")
+                log(f"Invalid Response from {url}")
 
         except Exception as e:
             log(e)
@@ -465,7 +602,7 @@ class Service():
         self.update()
 
     def prompt(self, msg):
-        return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}{msg}: {self.value}{self.unit}"
+        return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}{' - ' + msg if msg else ''}: {self.value}{self.unit}"
 
     def update(self, value=None, changed=None):
         if changed is None or value is None:
@@ -491,7 +628,7 @@ class Service():
                         changed = datetime.now()
 
                 else:
-                    log("Invalid Response")
+                    log(f"Invalid Response from {url}")
                     return
 
             except Exception as e:
@@ -511,8 +648,21 @@ class Service():
 
 
 if __name__ == "__main__":
+    # Read settings from config file
+    cfg = read_config()
+    if not cfg:
+       log("No config")
+       sys.exit(1)
+
     # Instantiate our bridge
-    bridge = Bridge(HueIP, username=HueAPIKey)
+    bridge = Bridge(HUEsettings["ip"], username=HUEsettings["key"], onchange=on_change)
+    if not bridge:
+       log("Hue Bridge not accessible")
+       sys.exit(1)
+
+    # If a new key was created, save it in the ini file
+    if not HUEsettings["key"]:
+       save_key(cfg, bridge.username)
 
     # Print the last status of all connected sensors & services
     for sensor in bridge.sensors:
@@ -520,7 +670,7 @@ if __name__ == "__main__":
         log(f"{sensor.product_name}: {sensor.name}")
 
         for service in sensor.services:
-            status.append(service.prompt(status_msg))
+            status.append(service.prompt(LOGsettings["status"]))
 
         for line in sorted(status):
             log(line)
