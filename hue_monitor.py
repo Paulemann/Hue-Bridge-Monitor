@@ -203,7 +203,7 @@ def save_key(config, key):
         with open(config_file, 'w') as configfile:
             config.write(configfile)
     except Exception as e:
-        log(f"LOGsettings['cfg_write_error']: {e}")
+        log(f"{LOGsettings['cfg_write_error']}: {e}")
 
 
 def log(message):
