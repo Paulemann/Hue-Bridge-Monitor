@@ -75,8 +75,17 @@ HueServices = [
 ]
 
 LOGsettings = {
-    "status":     "Letzer Wert",
-    "event":      "Neuer Wert"
+    "status":          "Letzer Wert",
+    "event":           "Neuer Wert",
+    "motion_detected": "Bewegung erkannt",
+    "mail_sent":       "Nachricht gesendet",
+    "mail_failed":     "Nachrichtenübermittlung fehlgeschlagen",
+    "mail_restricted": "Nachrichtenübermittlung eingeschränkt",
+    "cfg_not_found":   "Konfigurationsdatei nicht gefunden",
+    "cfg_write_error": "Fehler beim Lesen der Konfiguration",
+    "cfg_read_error":  "Fehler beim Schreiben der Konfiguration",
+    "no_response":     "Keine Antwort",
+    "timeout":         "Zeitüberschreitung"
 }
 
 SMTPsettings = {
@@ -109,7 +118,7 @@ MSGsettings = {
 
 def read_config():
     if not os.path.exists(config_file):
-        log(f"Could not find configuration file \"{config_file}\"")
+        log(f"{LOGsettings['cfg_not_found']}: \"{config_file}\"")
         return None
 
     config = None
@@ -127,8 +136,17 @@ def read_config():
         #
         # Customize settings for logging
         #
-        LOGsettings["status"] = config.get("Logging", "status")
-        LOGsettings["event"]  = config.get("Logging", "event")
+        LOGsettings["status"]          = config.get("Logging", "status")
+        LOGsettings["event"]           = config.get("Logging", "event")
+        LOGsettings["motion_detected"] = config.get("Logging", "motion_detected")
+        LOGsettings["mail_sent"]       = config.get("Logging", "mail_sent")
+        LOGsettings["mail_failed"]     = config.get("Logging", "mail_failed")
+        LOGsettings["mail_restricted"] = config.get("Logging", "mail_restricted")
+        LOGsettings["cfg_not_found"]   = config.get("Logging", "cfg_not_found")
+        LOGsettings["cfg_write_error"] = config.get("Logging", "cfg_write_error")
+        LOGsettings["cfg_read_error"]  = config.get("Logging", "cfg_read_error")
+        LOGsettings["no_response"]     = config.get("Logging", "no_response")
+        LOGsettings["timeout"]         = config.get("Logging", "timeout")
 
         #
         # Mail account settings
@@ -173,7 +191,7 @@ def read_config():
         MSGsettings["recipients"]     = [ r.strip() for r in config.get("Messaging", "recipients").split(',') ]
 
     except Exception as e:
-        log(f"Error processing \"{config_file}\": {e}")
+        log(f"{LOGsettings['cfg_read_error']}: {e}")
 
     return config
 
@@ -185,7 +203,7 @@ def save_key(config, key):
         with open(config_file, 'w') as configfile:
             config.write(configfile)
     except Exception as e:
-        log(f"Error updating \"{config_file}\": {e}")
+        log(f"LOGsettings['cfg_write_error']: {e}")
 
 
 def log(message):
@@ -336,10 +354,10 @@ def sendmail(recipients, subject, msg_body, subtype=None):
             server.login(SMTPsettings["user"], SMTPsettings["password"])
             server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
 
-        log("Mail delivery successful")
+        log(LOGsettings["mail_sent"])
 
     except Exception as e:
-        log(f"Mail delivery failed: {e}")
+        log(f"{LOGsettings['mail_failed']}: {e}")
 
 
 def on_change(bridge, sensor, service, value, changed):
@@ -368,12 +386,13 @@ def on_change(bridge, sensor, service, value, changed):
         today = date
 
     if service.name == 'motion' and value:
+        log(f"{changed.strftime(date_out_format)} {sensor.name} {LOGsettings['motion_detected']}")
         if MOTIONsettings["notify"]:
             # Send alert message if no exceptions apply
             if not check_date(changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_daily(changed.strftime(time_format), MOTIONsettings["except_daily"]):
                 sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, changed.strftime(time_format)))
             else:
-                log("Motion alert: Mail delivery restricted")
+                log(LOGsettings["mail_restricted"])
 
         # Update the motion profile
         h = int(changed.strftime("%H"))
@@ -420,7 +439,7 @@ class Bridge():
                         username = data["success"]["username"]
 
                 else:
-                    log(f"Invalid Response from {url}")
+                    log(f"{LOGsettings['no_response']}: {url}")
 
             except Exception as e:
                 log(e)
@@ -446,7 +465,7 @@ class Bridge():
 
                         device_parms.append(device_parm)
             else:
-                log(f"Invalid Response from {url}")
+                log(f"{LOGsettings['no_response']}: {url}")
 
         except Exception as e:
             log(e)
@@ -518,14 +537,11 @@ class Bridge():
                                     log(service.prompt(LOGsettings["event"]))
 
                     else:
-                        log(f"Invalid Response from {url}")
+                        log(f"{LOGsettings['no_response']}: {url}")
 
                 except requests.exceptions.RequestException as e:
                     if "timed out" in str(e):
-                        ## if the request has timed out (i.e. after a day with no events)
-                        ## send a report - even if it's empty
-                        #html = html_report(self, today)
-                        #sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
+                        log(f"{LOGsettings['timeout']}: {url}")
                         pass
                     else:
                         log(e)
@@ -574,7 +590,7 @@ class Sensor():
                         continue
 
             else:
-                log(f"Invalid Response from {url}")
+                log(f"{LOGsettings['no_response']}: {url}")
 
         except Exception as e:
             log(e)
@@ -636,7 +652,7 @@ class Service():
                         changed = datetime.now()
 
                 else:
-                    log(f"Invalid Response from {url}")
+                    log(f"{LOGsettings['no_response']}: {url}")
                     return
 
             except Exception as e:

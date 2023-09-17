@@ -12,6 +12,14 @@ password = secret
 [Logging]
 status = Letzer Wert
 event = Neuer Wert
+mail_sent = Nachricht gesendet
+mail_failed = Nachrichtenübermittlung fehlgeschlagen
+mail_restricted = Nachrichtenübermittlung eingeschränkt
+cfg_not_found =   Konfigurationsdatei nicht gefunden
+cfg_write_error = Fehler beim Lesen der Konfiguration
+cfg_read_error = Fehler beim Schreiben der Konfiguration
+no_response = Keine Antwort
+timeout = Zeitüberschreitung
 
 [Messaging]
 report_subject = Täglicher Bericht - Sensordaten
