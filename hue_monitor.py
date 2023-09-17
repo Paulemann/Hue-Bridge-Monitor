@@ -286,9 +286,10 @@ def html_report(bridge, date):
             i = 1
 
             for changed, value in service.data:
-                #rows[i] = rows[i] + f"<td><tt>{changed.strftime(time_format)} {value:>5}{service.unit}</tt></td>"
-                rows[i] = rows[i] + f"<td>{changed.strftime(time_format)} {value:}{service.unit}</td>"
-                i = i + 1
+                if changed.strftime(day_format) == date:
+                    #rows[i] = rows[i] + f"<td><tt>{changed.strftime(time_format)} {value:>5}{service.unit}</tt></td>"
+                    rows[i] = rows[i] + f"<td>{changed.strftime(time_format)} {value:}{service.unit}</td>"
+                    i = i + 1
 
             while(i <=  maxrows):
                 rows[i] = rows[i] + "<td></td>"
@@ -341,12 +342,12 @@ def sendmail(recipients, subject, msg_body, subtype=None):
         log(f"Mail delivery failed: {e}")
 
 
-def on_change(bridge, sensor, service):
+def on_change(bridge, sensor, service, value, changed):
     global today, plot
 
     # Let's see if a day has passed. It's time to send a new report then
     date = datetime.now().strftime(day_format)
-    #date = service.changed.strftime(day_format)
+    #date = changed.strftime(day_format)
     if date != today:
         # Plot the motion profile of the passed day
         log(today)
@@ -360,19 +361,23 @@ def on_change(bridge, sensor, service):
         html = html_report(bridge, today)
         sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
 
+        # The first event on a new day will reset the data store of all services
+        for service in bridge.sensors:
+            service.reset()
+
         today = date
 
-    if service.name == 'motion' and service.value:
+    if service.name == 'motion' and value:
         if MOTIONsettings["notify"]:
-            # Send alert message (if set)
-            if not check_date(service.changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_daily(service.changed.strftime(time_format), MOTIONsettings["except_daily"]):
-                sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, service.changed.strftime(time_format)))
+            # Send alert message if no exceptions apply
+            if not check_date(changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_daily(changed.strftime(time_format), MOTIONsettings["except_daily"]):
+                sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, changed.strftime(time_format)))
             else:
-                log("Mail delivery restricted")
+                log("Motion alert: Mail delivery restricted")
 
         # Update the motion profile
-        h = int(service.changed.strftime("%H"))
-        m = int(service.changed.strftime("%M"))
+        h = int(changed.strftime("%H"))
+        m = int(changed.strftime("%M"))
         plot_index = h*4 + m//15
         plot[plot_index] = high_chr
 
@@ -506,12 +511,12 @@ class Bridge():
                                     else:
                                         changed = datetime.now()
 
-                                    service.update(value=value, changed=changed)
+                                    if self.onchange:
+                                        self.onchange(self, sensor, service, value, changed)
 
+                                    service.update(value=value, changed=changed)
                                     log(service.prompt(LOGsettings["event"]))
 
-                                    if self.onchange:
-                                        self.onchange(self, sensor, service)
                     else:
                         log(f"Invalid Response from {url}")
 
@@ -604,6 +609,9 @@ class Service():
     def prompt(self, msg):
         return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}{' - ' + msg if msg else ''}: {self.value}{self.unit}"
 
+    def reset(self):
+        self.data = []
+
     def update(self, value=None, changed=None):
         if changed is None or value is None:
             url = f"https://{self.__ip}/clip/v2/resource/{self.name}/{self.id}"
@@ -634,10 +642,6 @@ class Service():
             except Exception as e:
                 log(e)
                 return
-
-        # Reset data at each new day:
-        if self.changed and changed.strftime("%d") != self.changed.strftime("%d"):
-            self.data = []
 
         self.data.append((changed, value))
 
