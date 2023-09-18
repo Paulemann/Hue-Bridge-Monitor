@@ -12,6 +12,7 @@ password = secret
 [Logging]
 status = Letzer Wert
 event = Neuer Wert
+report = Sende Tagesbericht für {}
 mail_sent = Nachricht gesendet
 mail_failed = Nachrichtenübermittlung fehlgeschlagen
 mail_restricted = Nachrichtenübermittlung eingeschränkt

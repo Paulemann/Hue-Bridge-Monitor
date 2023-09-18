@@ -46,28 +46,28 @@ config_file = os.path.splitext(os.path.basename(__file__))[0] + '.ini'
 HueServices = [
     {
         "name":         "device_power",
-        "description":  "Ladezustand der 2x AAA Batterien",
+        "description":  "Battery Level",
         "section":      "power_state",
         "value":        "battery_level",
         "unit":         "%"
     },
     {
         "name":         "light_level",
-        "description":  "Lichtsensor",
+        "description":  "Licht Sensor",
         "section":      "light",
         "value":        "light_level",
         "unit":         " Lux"
     },
     {
         "name":         "temperature",
-        "description":  "Temperatursensor",
+        "description":  "Temperature Sensor",
         "section":      "temperature",
         "value":        "temperature",
         "unit":         "°C"
     },
     {
         "name":         "motion",
-        "description":  "Bewegungssensor",
+        "description":  "Motion Sensor",
         "section":      "motion",
         "value":        "motion",
         "unit":         ""
@@ -75,17 +75,18 @@ HueServices = [
 ]
 
 LOGsettings = {
-    "status":          "Letzer Wert",
-    "event":           "Neuer Wert",
-    "motion_detected": "Bewegung erkannt",
-    "mail_sent":       "Nachricht gesendet",
-    "mail_failed":     "Nachrichtenübermittlung fehlgeschlagen",
-    "mail_restricted": "Nachrichtenübermittlung eingeschränkt",
-    "cfg_not_found":   "Konfigurationsdatei nicht gefunden",
-    "cfg_write_error": "Fehler beim Lesen der Konfiguration",
-    "cfg_read_error":  "Fehler beim Schreiben der Konfiguration",
-    "no_response":     "Keine Antwort",
-    "timeout":         "Zeitüberschreitung"
+    "status":          "Last value",
+    "event":           "New value",
+    "report":          "Sending daily report for date {}",
+    "motion_detected": "Motion detected",
+    "mail_sent":       "Message snt",
+    "mail_failed":     "Message delivery failed",
+    "mail_restricted": "Message delivery restricted",
+    "cfg_not_found":   "Configuration file not found",
+    "cfg_write_error": "Error reading configuration",
+    "cfg_read_error":  "Error writing configuration",
+    "no_response":     "No response",
+    "timeout":         "Time out"
 }
 
 SMTPsettings = {
@@ -102,16 +103,16 @@ HUEsettings = {
 }
 
 MOTIONsettings = {
-    "notify":       "True",
+    "notify":       True,
     "except":       [],
     "except_daily": []
 }
 
 MSGsettings = {
-    "report_subject": "Täglicher Bericht",
-    "alert_subject":  "Bewegungsalarm",
-    "report_text":    "Sensordaten vom {}",
-    "alert_text":     "Am Sensor \"{}\" wurde um {} Uhr eine Bewegung erfasst.",
+    "report_subject": "Daily Reportt",
+    "alert_subject":  "Motion Alert",
+    "report_text":    "Sensor data of {}",
+    "alert_text":     "Sensor \"{}\" detcted a motion at {}.",
     "recipients":     []
 }
 
@@ -131,31 +132,25 @@ def read_config():
         # Customize service descriptions to suit your preference/language
         #
         for service in HueServices:
-            service["description"] = config.get("Service Descriptions", service["name"])
+            value = config.get("Service Descriptions", service["name"])
+            if value:
+                service["description"] = value
 
         #
         # Customize settings for logging
         #
-        LOGsettings["status"]          = config.get("Logging", "status")
-        LOGsettings["event"]           = config.get("Logging", "event")
-        LOGsettings["motion_detected"] = config.get("Logging", "motion_detected")
-        LOGsettings["mail_sent"]       = config.get("Logging", "mail_sent")
-        LOGsettings["mail_failed"]     = config.get("Logging", "mail_failed")
-        LOGsettings["mail_restricted"] = config.get("Logging", "mail_restricted")
-        LOGsettings["cfg_not_found"]   = config.get("Logging", "cfg_not_found")
-        LOGsettings["cfg_write_error"] = config.get("Logging", "cfg_write_error")
-        LOGsettings["cfg_read_error"]  = config.get("Logging", "cfg_read_error")
-        LOGsettings["no_response"]     = config.get("Logging", "no_response")
-        LOGsettings["timeout"]         = config.get("Logging", "timeout")
+        for option in config.options("Logging"):
+            value = config.get("Logging", option)
+            if value:
+                LOGsettings[option] = value
 
         #
         # Mail account settings
         #
-        SMTPsettings["user"]     = config.get("Mail Account", "user")
-        SMTPsettings["name"]     = config.get("Mail Account", "name")
-        SMTPsettings["password"] = config.get("Mail Account", "password")
-        SMTPsettings["server"]   = config.get("Mail Account", "server")
-        SMTPsettings["port"]     = config.get("Mail Account", "port")
+        for option in config.options("Mail Account"):
+            value = config.get("Mail Account", option)
+            if value:
+                SMTPsettings[option] = value
 
         #
         # Hue Bridge IP and User Name/API Key
@@ -171,9 +166,13 @@ def read_config():
         # Setnotify on motion events to True if you want alert meesages on motion detection
         # except dates specify periods when no alert is sent
         #
-        MOTIONsettings["notify"]       = config.getboolean("Motion Alert", "notify")
-        MOTIONsettings["except"]       = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in config.get("Motion Alert", "except").split(",") if x != "" ] ] ]
-        MOTIONsettings["except_daily"] = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in config.get("Motion Alert", "except_daily").split(",") if x != "" ] ] ]
+        for option in config.options("Motion Alert"):
+            value = config.get("Motion Alert", option)
+            if value:
+                if option == "notify":
+                    MOTIONsettings[option] = config.getboolean("Motion Alert", option)
+                else:
+                    MOTIONsettings[option] = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in value.split(",") if x != "" ] ] ]
         #
         # except dates must be specified as comma separated intervals in the format
         # "%d.%m.%y %H:%M:%S - %d.%m.%y %H:%M:%S" (date_out_format) in the ini file
@@ -184,11 +183,13 @@ def read_config():
         # E-Mail Settings (requires customization)
         # If HueReceivers list is empty, no E-mail will be sent
         #
-        MSGsettings["report_subject"] = config.get("Messaging", "report_subject")
-        MSGsettings["alert_subject"]  = config.get("Messaging", "alert_subject")
-        MSGsettings["report_text"]    = config.get("Messaging", "report_text")
-        MSGsettings["alert_text"]     = config.get("Messaging", "alert_text")
-        MSGsettings["recipients"]     = [ r.strip() for r in config.get("Messaging", "recipients").split(',') ]
+        for option in config.options("Messaging"):
+            value = config.get("Messaging", option)
+            if value:
+                if option == "recipients":
+                    MSGsettings[option] = [ r.strip() for r in value.split(',') ]
+                else:
+                    MSGsettings[option] = value
 
     except Exception as e:
         log(f"{LOGsettings['cfg_read_error']}: {e}")
@@ -376,12 +377,14 @@ def on_change(bridge, sensor, service, value, changed):
         plot = list(96*low_chr)
 
         # Send the daily report
+        log(LOGsettings["report"].format(today))
         html = html_report(bridge, today)
         sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
 
         # The first event on a new day will reset the data store of all services
-        for service in bridge.sensors:
-            service.reset()
+        for sensor in bridge.sensors:
+            for service in sensor.services:
+                service.reset()
 
         today = date
 
