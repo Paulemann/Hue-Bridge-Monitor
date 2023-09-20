@@ -3,18 +3,21 @@
 import requests
 import json
 import sys
-from datetime import datetime
 import time
+import smtplib
+import os
+#import ssl
+
+from datetime import datetime
 from urllib3.exceptions import InsecureRequestWarning
+
+from threading import Timer
 
 from email.utils import formataddr
 from email.header import Header
 from email.message import EmailMessage
-import smtplib
-#import ssl
 
 from configparser import ConfigParser
-import os
 
 #
 # Suppress only the single warning from urllib3 needed.
@@ -75,18 +78,19 @@ HueServices = [
 ]
 
 LOGsettings = {
-    "status":          "Last value",
-    "event":           "New value",
-    "report":          "Sending daily report for date {}",
-    "motion_detected": "Motion detected",
-    "mail_sent":       "Message snt",
-    "mail_failed":     "Message delivery failed",
-    "mail_restricted": "Message delivery restricted",
-    "cfg_not_found":   "Configuration file not found",
-    "cfg_write_error": "Error reading configuration",
-    "cfg_read_error":  "Error writing configuration",
-    "no_response":     "No response",
-    "timeout":         "Time out"
+    "report":           "Sending daily report for date {}",
+    "motion_detected":  "Motion detected by {} sensor",
+    "mail_sent":        "Message sent",
+    "mail_failed":      "Message delivery failed: {}",
+    "mail_restricted":  "Message delivery restricted",
+    "cfg_not_found":    "Configuration file not found: {}",
+    "cfg_write_error":  "Error reading configuration: {}",
+    "cfg_read_error":   "Error writing configuration: {}",
+    "invalid_response": "Invalid response from {}",
+    "timeout":          "Connection to {} timed out",
+    "exception":        "Unexpected error: {}",
+    "suspended":        "Service {} temporarily disabled",
+    "enabled":          "Service {} re-enabled"
 }
 
 SMTPsettings = {
@@ -105,7 +109,8 @@ HUEsettings = {
 MOTIONsettings = {
     "notify":       True,
     "except":       [],
-    "except_daily": []
+    "except_daily": [],
+    "suspend":      True
 }
 
 MSGsettings = {
@@ -119,7 +124,7 @@ MSGsettings = {
 
 def read_config():
     if not os.path.exists(config_file):
-        log(f"{LOGsettings['cfg_not_found']}: \"{config_file}\"")
+        log("cfg_not_found", argument=config_file)
         return None
 
     config = None
@@ -169,7 +174,7 @@ def read_config():
         for option in config.options("Motion Alert"):
             value = config.get("Motion Alert", option)
             if value:
-                if option == "notify":
+                if option == "notify" or option == "suspend":
                     MOTIONsettings[option] = config.getboolean("Motion Alert", option)
                 else:
                     MOTIONsettings[option] = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in value.split(",") if x != "" ] ] ]
@@ -192,7 +197,7 @@ def read_config():
                     MSGsettings[option] = value
 
     except Exception as e:
-        log(f"{LOGsettings['cfg_read_error']}: {e}")
+        log("cfg_read_error", argument=e)
 
     return config
 
@@ -204,11 +209,17 @@ def save_key(config, key):
         with open(config_file, 'w') as configfile:
             config.write(configfile)
     except Exception as e:
-        log(f"{LOGsettings['cfg_write_error']}: {e}")
+        log("cfg_write_error", argument=e)
 
 
-def log(message):
-    print(message)
+def log(message, argument=None):
+    if message in LOGsettings.keys():
+        if argument and "{}" in LOGsettings[message]:
+            print(LOGsettings[message].format(argument))
+        else:
+            print(LOGsettings[message])
+    else:
+        print(message)
 
 
 def utc2local(utc):
@@ -217,31 +228,19 @@ def utc2local(utc):
     return utc + offset
 
 
-def check_date(date, interval):
+def check_date(date, interval, daily=False):
+    if daily:
+        format = time_format
+    else:
+        format = date_out_format
+
     try:
         #compare = datetime.now()
-        compare = datetime.strptime(date, date_out_format)
+        compare = datetime.strptime(date, format)
 
         for first, last in interval:
-            start = datetime.strptime(first, date_out_format[:len(first)])
-            end = datetime.strptime(last, date_out_format[:len(last)])
-
-            if start <= compare <= end:
-                return True
-    except:
-        pass
-
-    return False
-
-
-def check_daily(date, interval):
-    try:
-        #compare = datetime.now()
-        compare = datetime.strptime(date, time_format)
-
-        for first, last in interval:
-            start = datetime.strptime(first, time_format[:len(first)])
-            end = datetime.strptime(last, time_format[:len(last)])
+            start = datetime.strptime(first, format[:len(first)])
+            end = datetime.strptime(last, format[:len(last)])
 
             if start <= compare <= end:
                 return True
@@ -281,7 +280,7 @@ def html_report(bridge, date):
         power_service = ([ s for s in sensor.services if s.name == "device_power" ] or [None])[0]
         if power_service:
             power_service.update()
-            log(power_service.prompt(LOGsettings["status"]))
+            log(power_service.prompt())
 
             html +=  f"\t\t<p>{power_service.description}: {power_service.value}{power_service.unit}</p>\n"
 
@@ -355,10 +354,10 @@ def sendmail(recipients, subject, msg_body, subtype=None):
             server.login(SMTPsettings["user"], SMTPsettings["password"])
             server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
 
-        log(LOGsettings["mail_sent"])
+        log("mail_sent")
 
     except Exception as e:
-        log(f"{LOGsettings['mail_failed']}: {e}")
+        log("mail_failed", argument=e)
 
 
 def on_change(bridge, sensor, service, value, changed):
@@ -377,7 +376,7 @@ def on_change(bridge, sensor, service, value, changed):
         plot = list(96*low_chr)
 
         # Send the daily report
-        log(LOGsettings["report"].format(today))
+        log("report", argument=today)
         html = html_report(bridge, today)
         sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
 
@@ -389,13 +388,13 @@ def on_change(bridge, sensor, service, value, changed):
         today = date
 
     if service.name == 'motion' and value:
-        log(f"{changed.strftime(date_out_format)} {sensor.name} {LOGsettings['motion_detected']}")
+        log("motion_detected", argument=sensor.name)
         if MOTIONsettings["notify"]:
             # Send alert message if no exceptions apply
-            if not check_date(changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_daily(changed.strftime(time_format), MOTIONsettings["except_daily"]):
+            if not check_date(changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_date(changed.strftime(time_format), MOTIONsettings["except_daily"], daily=True):
                 sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, changed.strftime(time_format)))
             else:
-                log(LOGsettings["mail_restricted"])
+                log("mail_restricted")
 
         # Update the motion profile
         h = int(changed.strftime("%H"))
@@ -412,7 +411,7 @@ class Bridge():
         self.onchange      = onchange
 
         self.devices       = self.__devices()
-        self.sensors       = [ Sensor(device["id"], device["name"], self) for device in self.devices if device["product_name"] == "Hue motion sensor" ] or None
+        self.sensors       = [ Sensor(device["id"], device["name"], self) for device in self.devices if device["product_name"] == "Hue motion sensor" ]
 
         # We'll need to customize this if name changes
         self.product_name  = "Hue Bridge"
@@ -431,7 +430,7 @@ class Bridge():
         # do this endlessly until successful (i.e. someone pressed the button)
         while(username is None):
             try:
-                response = requests.post(url, json = my_obj, timeout=3, verify=False)
+                response = requests.post(url, json=my_obj, timeout=3, verify=False)
 
                 if response and response.status_code == 200:
                     data = response.json()[0]
@@ -442,10 +441,10 @@ class Bridge():
                         username = data["success"]["username"]
 
                 else:
-                    log(f"{LOGsettings['no_response']}: {url}")
+                    log("invalid_response", argument=url)
 
             except Exception as e:
-                log(e)
+                log("exception", argument=e)
                 break
 
         return username
@@ -468,10 +467,10 @@ class Bridge():
 
                         device_parms.append(device_parm)
             else:
-                log(f"{LOGsettings['no_response']}: {url}")
+                log("invalid_response", argument=url)
 
         except Exception as e:
-            log(e)
+            log("exception", argument=e)
 
         return device_parms
 
@@ -526,7 +525,11 @@ class Bridge():
                                     else:
                                         service_data = event_data[service.section_name]
 
-                                    value = service_data[service.value_name]
+                                    #value = service_data[service.value_name]
+                                    if service.value_name in service_data.keys():
+                                        value = service_data[service.value_name]
+                                    else:
+                                        value = None
 
                                     if "changed" in service_data.keys():
                                         changed = utc2local(datetime.strptime(service_data["changed"], date_in_format))
@@ -537,25 +540,25 @@ class Bridge():
                                         self.onchange(self, sensor, service, value, changed)
 
                                     service.update(value=value, changed=changed)
-                                    log(service.prompt(LOGsettings["event"]))
+                                    log(service.prompt())
 
                     else:
-                        log(f"{LOGsettings['no_response']}: {url}")
+                        log("invalid_response", argument=url)
 
                 except requests.exceptions.RequestException as e:
                     if "timed out" in str(e):
-                        log(f"{LOGsettings['timeout']}: {url}")
-                        pass
+                        log("timeout", argument=url)
                     else:
-                        log(e)
-                        break
+                        log("exception", argument=e)
+                        #sys.exit(1)
+                #except requests.exceptions.ChunkedEncodingError as e:
+                #    log("exception", argument=e)
                 except KeyError:
                     pass
                 except KeyboardInterrupt:
                     break
                 #except Exception as e:
-                #    log(e)
-
+                #    log("exception", argument=e)
 
 
 class Sensor():
@@ -593,10 +596,10 @@ class Sensor():
                         continue
 
             else:
-                log(f"{LOGsettings['no_response']}: {url}")
+                log("invalid_response", argument=url)
 
         except Exception as e:
-            log(e)
+            log("exception", e)
             pass
 
         return service_list
@@ -614,30 +617,66 @@ class Service():
         self.value_name   = service["value"]
         self.unit         = service["unit"]
 
-
         self.owner        = owner
 
         self.__ip         = owner.owner.ip # bridge.ip()
         self.__username   = owner.owner.username # bridge.username()
+
+        self.__url        = f"https://{self.__ip}/clip/v2/resource/{self.name}/{self.id}"
+        self.__headers    = {"hue-application-key": self.__username}
+
+        self.enabled      = self.is_enabled()
 
         self.value        = None
         self.changed      = None
         self.data         = []
         self.update()
 
-    def prompt(self, msg):
-        return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}{' - ' + msg if msg else ''}: {self.value}{self.unit}"
+    def prompt(self):
+        #timestamp = (self.changed or datetime.now()).strftime(date_out_format)
+        return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}: {self.value}{self.unit}"
 
     def reset(self):
         self.data = []
 
+    def is_enabled(self):
+        enabled = None
+
+        try:
+            response = requests.get(self.__url, headers=self.__headers, timeout=3, verify=False)
+            if response and response.status_code == 200:
+                data = response.json()["data"][0]
+                if "enabled" in data.keys():
+                    enabled = data["enabled"]
+            else:
+                log("invalid_response", argument=self.__url)
+        except Exception as e:
+            log("exception", argument=e)
+
+        return enabled
+
+    def enable(self, set=True):
+        if self.enabled is None: # service == device_power?
+            return False
+
+        try:
+            response = requests.put(self.__url, json={"enabled": set}, headers=self.__headers, timeout=3, verify=False)
+            if response and response.status_code == 200:
+                self.enabled = set
+                return True
+            else:
+                log("invalid_response", argument=self.__url)
+
+        except Exception as e:
+            log("exception", argument=e)
+
+        return False
+
     def update(self, value=None, changed=None):
         if changed is None or value is None:
-            url = f"https://{self.__ip}/clip/v2/resource/{self.name}/{self.id}"
-            headers = { "hue-application-key": self.__username }
 
             try:
-                response = requests.get(url, headers=headers, timeout=3, verify=False)
+                response = requests.get(self.__url, headers=self.__headers, timeout=3, verify=False)
 
                 if response and response.status_code == 200:
                     data = response.json()["data"][0]
@@ -647,7 +686,10 @@ class Service():
                     else:
                         service_data = data[self.section_name]
 
-                    value = service_data[self.value_name]
+                    if self.value_name in service_data.keys():
+                        value = service_data[self.value_name]
+                    else:
+                        value = None
 
                     if "changed" in service_data.keys():
                         changed = utc2local(datetime.strptime(service_data["changed"], date_in_format))
@@ -655,11 +697,11 @@ class Service():
                         changed = datetime.now()
 
                 else:
-                    log(f"{LOGsettings['no_response']}: {url}")
+                    log("invalid_response", argument=self.__url)
                     return
 
             except Exception as e:
-                log(e)
+                log("exception", argument=e)
                 return
 
         self.data.append((changed, value))
@@ -668,6 +710,29 @@ class Service():
         self.changed = changed
 
         return
+
+
+class SuspendTimer(Timer):
+    def run(self):
+         while not self.finished.wait(self.interval):
+             self.function(*self.args, **self.kwargs)
+
+
+def check_exceptions(bridge):
+    if check_date(datetime.now().strftime(date_out_format), MOTIONsettings["except"]) or check_date(datetime.now().strftime(time_format), MOTIONsettings["except_daily"], daily=True):
+         for sensor in bridge.sensors:
+             for service in sensor.services:
+                 if service.enabled:
+                     response = service.enable(False)
+                     if response:
+                         log("suspended", argument=service.name)
+    else:
+         for sensor in bridge.sensors:
+             for service in sensor.services:
+                 if service.enabled is not None and not service.enabled:
+                     response = service.enable()
+                     if response:
+                         log("enabled", argument=service.name)
 
 
 if __name__ == "__main__":
@@ -688,15 +753,25 @@ if __name__ == "__main__":
        save_key(cfg, bridge.username)
 
     # Print the last status of all connected sensors & services
-    for sensor in bridge.sensors:
-        status = []
-        log(f"{sensor.product_name}: {sensor.name}")
+    if bridge.sensors:
+        for sensor in bridge.sensors:
+            status = []
+            log(f"{sensor.product_name}: {sensor.name}")
 
-        for service in sensor.services:
-            status.append(service.prompt(LOGsettings["status"]))
+            for service in sensor.services:
+                status.append(service.prompt())
 
-        for line in sorted(status):
-            log(line)
+            for line in sorted(status):
+                log(line)
+
+    if MOTIONsettings["suspend"]:
+        timer = SuspendTimer(60, check_exceptions, args=(bridge,))
+        timer.start()
+    else:
+        timer = None
 
     # Listen for events
     bridge.events()
+
+    if timer:
+        timer.cancel()
