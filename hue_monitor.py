@@ -5,8 +5,15 @@ import json
 import sys
 import time
 import smtplib
+import socket
+import fcntl
+import struct
 import os
+import signal
+#import base64
 #import ssl
+
+import pandas as pd
 
 from datetime import datetime
 from urllib3.exceptions import InsecureRequestWarning
@@ -24,15 +31,57 @@ from configparser import ConfigParser
 #
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
+#
+# Handle SIGTERM signal
+#
+def sigterm_handler(_signo, _stack_frame):
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, sigterm_handler)
+signal.signal(signal.SIGTERM, sigterm_handler)
+
+#
+# Motion profile has 24 hrs. with a 15 min. time grid
+# ==> 96 discrete values (on/off) per day
+#
 low_chr  = chr(0x2581)
 high_chr = chr(0x2588)
-
 plot     = list(96*low_chr)
 timeline = (10*' ').join(['0', '03', '06', '09', '12', '15', '18', '21', '24'])
 
+#
+# HTML header to be used in HTML formatted report
+#
+HTMLheader = """
+  <head>
+    <style>
+      table {{
+        border-collapse: collapse;
+        width: 100%;
+      }}
+
+      th, td {{
+        text-align: left;
+        padding: 8px;
+      }}
+
+      tr:nth-child(even) {{
+        background-color: #D6EEEE;
+      }}
+    </style>
+  </head>
+"""
+
+#
+# Date format used by sensor
+#
 date_in_format  = "%Y-%m-%dT%H:%M:%S.%fZ"
 
+#
+# Date format used for reporting & logging
+#
 day_format      = "%d.%m.%y"
+day_format_long = "%a, %d.%m.%y"
 time_format     = "%H:%M:%S"
 date_out_format = f"{day_format} {time_format}"
 
@@ -79,47 +128,79 @@ HueServices = [
 
 LOGsettings = {
     "report":           "Sending daily report for date {}",
-    "motion_detected":  "Motion detected by {} sensor",
-    "mail_sent":        "Message sent",
-    "mail_failed":      "Message delivery failed: {}",
-    "mail_restricted":  "Message delivery restricted",
+    "motion_detected":  "Motion detected by sensor {}",
+    "msg_sent":         "Message sent",
+    "msg_failed":       "Message delivery failed: {}",
+    "msg_suspended ":   "Message delivery suspended at specified time interval",
     "cfg_not_found":    "Configuration file not found: {}",
-    "cfg_write_error":  "Error reading configuration: {}",
-    "cfg_read_error":   "Error writing configuration: {}",
+    "cfg_write_error":  "Error writing configuration: {}",
+    "cfg_read_error":   "Error reading configuration: {}",
     "invalid_response": "Invalid response from {}",
     "timeout":          "Connection to {} timed out",
     "exception":        "Unexpected error: {}",
-    "suspended":        "Service {} temporarily disabled",
-    "enabled":          "Service {} re-enabled"
+    "suspended":        "Service '{}' temporarily disabled",
+    "enabled":          "Service '{}' re-enabled",
+    "no_config":        "No configuration",
+    "no_response":      "No response or no IP address"
+}
+
+REPORTsettings = {
+    "report_subject":   "Daily Report",
+    "report_to":        [],
+    "report_header":    "Sensor data of {}",
+    "bridge_ip":        "Hue bridge IP address: {}",
+    "notify_on_motion": "Send a notification when movement is detected: {}",
+    "suspend_services": "Suspend services while notifications are suppressed: {}",
+    "suppress_period":  "Suppress notifications (Period): {}",
+    "suppress_daily":   "Suppress notifications (Daily): {}",
+    "on":               "On",
+    "off":              "Off",
+    "attach":		True,
+    "store":		None
 }
 
 SMTPsettings = {
-    "user":       "user@mail.com",
-    "name":       "Hue Bridge",
-    "password":   "password",
-    "server":     "smtp.mail.com",
-    "port":       587
+    "user":             "user@mail.com",
+    "name":             "Hue Bridge",
+    "password":         "password",
+    "server":           "smtp.mail.com",
+    "port":             587
 }
 
 HUEsettings = {
-    "ip":         "192.168.178.100",
-    "key":        None
+    "ip":               "192.168.178.100",
+    "key":              None
 }
 
 MOTIONsettings = {
-    "notify":       True,
-    "except":       [],
-    "except_daily": [],
-    "suspend":      True
+    "notify":           False,
+    "notify_to":        "",
+    "notify_subject":   "Motion Alert",
+    "notify_text":      "Sensor \"{}\" detected a motion at {}.",
+    "except":           "",
+    "except_daily":     "",
+    "suspend":          True
 }
 
-MSGsettings = {
-    "report_subject": "Daily Reportt",
-    "alert_subject":  "Motion Alert",
-    "report_text":    "Sensor data of {}",
-    "alert_text":     "Sensor \"{}\" detcted a motion at {}.",
-    "recipients":     []
-}
+
+def get_ip_address(ifname): #ifname = 'eth0' or 'wlan0'
+    ip = ''
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    try:
+        ip = socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(),
+            0x8915,  # SIOCGIFADDR
+            struct.pack('256s', bytes(ifname[:15], 'utf-8'))
+        )[20:24])
+    except:
+        pass
+
+    finally:
+        s.close()
+
+    return ip
 
 
 def read_config():
@@ -160,24 +241,24 @@ def read_config():
         #
         # Hue Bridge IP and User Name/API Key
         #
-        # Specifiy if user has been already created, else set to 'None'.
-        # Remeber you muss have physcal access to the Hue Bridge to create
-        # a new user/API Key
-        #
         HUEsettings["ip"]  = config.get("Hue Bridge", "ip")
         HUEsettings["key"] = config.get("Hue Bridge", "key")
 
         #
-        # Setnotify on motion events to True if you want alert meesages on motion detection
+        # Set notify on motion events to True if you want alert meesages on motion detection
         # except dates specify periods when no alert is sent
         #
-        for option in config.options("Motion Alert"):
-            value = config.get("Motion Alert", option)
-            if value:
-                if option == "notify" or option == "suspend":
-                    MOTIONsettings[option] = config.getboolean("Motion Alert", option)
-                else:
-                    MOTIONsettings[option] = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in value.split(",") if x != "" ] ] ]
+        if config.has_section("Motion Alert"):
+            #for option in ("notify", "suspend", "except", "except_daily"):
+            for option in config.options("Motion Alert"):
+                value = config.get("Motion Alert", option)
+                if value:
+                    if option == "notify" or option == "suspend":
+                        MOTIONsettings[option] = config.getboolean("Motion Alert", option)
+                    elif option == "notify_to" and "@" in value:
+                        MOTIONsettings[option] = [ r.strip() for r in value.split(',') ]
+                    else:
+                        MOTIONsettings[option] = value
         #
         # except dates must be specified as comma separated intervals in the format
         # "%d.%m.%y %H:%M:%S - %d.%m.%y %H:%M:%S" (date_out_format) in the ini file
@@ -185,21 +266,59 @@ def read_config():
         #
 
         #
-        # E-Mail Settings (requires customization)
-        # If HueReceivers list is empty, no E-mail will be sent
+        # Report Settings
+        # If receivers ("report_to") list is empty, no E-mail will be sent
         #
-        for option in config.options("Messaging"):
-            value = config.get("Messaging", option)
+        for option in config.options("Reporting"):
+            value = config.get("Reporting", option)
             if value:
-                if option == "recipients":
-                    MSGsettings[option] = [ r.strip() for r in value.split(',') ]
+                if option == "report_to":
+                    REPORTsettings[option] = [ r.strip() for r in value.split(',') ]
                 else:
-                    MSGsettings[option] = value
+                    REPORTsettings[option] = value
 
     except Exception as e:
         log("cfg_read_error", argument=e)
 
     return config
+
+
+def read_sensor_config(sensor_name):
+    #if not os.path.exists(config_file):
+    #    log("cfg_not_found", argument=config_file)
+    #    return None
+
+    #
+    # Set defaults
+    #
+    settings = MOTIONsettings
+
+    try:
+        config = ConfigParser()
+        config.read([os.path.abspath(config_file)])
+
+        #
+        # Set notify on motion events to True if you want alert meesages on motion detection
+        # except dates specify periods when no alert is sent
+        #
+        if config.has_section(sensor_name):
+            #for option in ("notify", "suspend", "except", "except_daily"):
+            for option in config.options(sensor_name):
+                value = config.get(sensor_name, option)
+                if value:
+                    if option == "notify" or option == "suspend":
+                        settings[option] = config.getboolean(sensor_name, option)
+                    else:
+                        settings[option] = value
+        #
+        # except dates must be specified as comma separated intervals in the format
+        # "%d.%m.%y %H:%M:%S - %d.%m.%y %H:%M:%S" (date_out_format) in the ini file
+        # with %H, %M, or %S being optional parameters
+        #
+    except Exception as e:
+        log("cfg_read_error", argument=e)
+
+    return settings
 
 
 def save_key(config, key):
@@ -228,14 +347,15 @@ def utc2local(utc):
     return utc + offset
 
 
-def check_date(date, interval, daily=False):
+def check_date(date, range, daily=False):
     if daily:
         format = time_format
     else:
         format = date_out_format
 
     try:
-        #compare = datetime.now()
+        interval = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in range.split(",") if x != "" ] ] ]
+
         compare = datetime.strptime(date, format)
 
         for first, last in interval:
@@ -250,84 +370,47 @@ def check_date(date, interval, daily=False):
     return False
 
 
-def html_report(bridge, date):
-    HTMLheader = """
-	<head>
-		<style>
-			table {
-				border-collapse: collapse;
-				width: 100%;
-			}
+def html_report(bridge, date=today):
+    try:
+        html = \
+f"""
+<html>{HTMLheader}
+  <body>
+    <h1>{REPORTsettings["report_header"].format(date)}</h1>
+    <p>{REPORTsettings['bridge_ip'].format(get_ip_address('wlan0'))}</p>
+"""
 
-			th, td {
-				text-align: left;
-				padding: 8px;
-			}
-
-			tr:nth-child(even) {
-				background-color: #D6EEEE;
-			}
-		</style>
-	</head>"""
-
-    heading = MSGsettings["report_text"].format(date)
-    html = f"<html>{HTMLheader}\n\t<body>\n\t\t<h1>{heading}</h1>\n"
-
-    for sensor in bridge.sensors:
-        heading = f"{sensor.product_name}: {sensor.name}"
-        html +=  f"\t\t<h2>{heading}</h2>\n"
-
-        power_service = ([ s for s in sensor.services if s.name == "device_power" ] or [None])[0]
-        if power_service:
+        for sensor in bridge.sensors:
+            power_service = [s for s in sensor.services if s.name == "device_power"][0]
             power_service.update()
-            log(power_service.prompt())
 
-            html +=  f"\t\t<p>{power_service.description}: {power_service.value}{power_service.unit}</p>\n"
+            html += \
+f"""
+    <h2>{sensor.product_name}: {sensor.name}</h2>
+    <p>{REPORTsettings['notify_on_motion'].format(REPORTsettings['on'] if sensor.settings['notify'] else REPORTsettings['off'])}</p>
+    <p>{REPORTsettings['suspend_services'].format(REPORTsettings['on'] if sensor.settings['suspend'] else REPORTsettings['off'])}</p>
+    <p>{REPORTsettings['suppress_period'].format(sensor.settings['except'])}</p>
+    <p>{REPORTsettings['suppress_daily'].format(sensor.settings['except_daily'])}</p>
+    <p>{power_service.description}: {power_service.data[-1][1]}{power_service.unit}</p>
+    {{}}
+"""
 
-        maxrows = 0
-        rows = []
+        html += \
+f"""
+  </body>
+</html>
+"""
 
-        for service in sensor.services:
-            if service.name == "device_power":
-                continue
-            if len(service.data) > maxrows:
-                maxrows = len(service.data)
-
-        for i in range(maxrows + 1):
-            rows.append("\t\t\t\t")
-
-        for service in sensor.services:
-            if service.name == "device_power":
-                continue
-
-            rows[0] = rows[0] + f"<th>{service.description}</th>"
-            i = 1
-
-            for changed, value in service.data:
-                if changed.strftime(day_format) == date:
-                    #rows[i] = rows[i] + f"<td><tt>{changed.strftime(time_format)} {value:>5}{service.unit}</tt></td>"
-                    rows[i] = rows[i] + f"<td>{changed.strftime(time_format)} {value:}{service.unit}</td>"
-                    i = i + 1
-
-            while(i <=  maxrows):
-                rows[i] = rows[i] + "<td></td>"
-                i = i + 1
-
-        for i in range(maxrows + 1):
-            rows[i] = "\t\t\t<tr>\n" + rows[i] + "\n\t\t\t</tr>\n"
-
-        rows[0] = "\t\t<table>\n" + rows[0]
-        rows[-1] = rows[-1] + "\t\t</table>\n"
-
-        for row in rows:
-            html += row
-
-    html += "\t</body>\n</html>"
+    except Exception as e:
+        log(str(e))
+        return None
 
     return html
 
 
-def sendmail(recipients, subject, msg_body, subtype=None):
+def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
+    #assert isinstance(recipients, list)
+
     if not recipients:
         return
 
@@ -346,55 +429,151 @@ def sendmail(recipients, subject, msg_body, subtype=None):
     else:
         msg.set_content(msg_body)
 
-    try:
-        #context = ssl.create_default_context()
-        with smtplib.SMTP(SMTPsettings["server"], port=SMTPsettings["port"]) as server:
-            #server.starttls(context=context)
-            server.starttls()
-            server.login(SMTPsettings["user"], SMTPsettings["password"])
-            server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
+    for attachment in attachments or []:
+        data = None
 
-        log("mail_sent")
+        if "path" in attachment and os.path.isfile(attachment["path"]):
+            with open(attachment["path"], "rb") as f:
+                data = f.read()
+        elif "data" in attachment:
+            data = attachment["data"].encode("utf-8")
 
-    except Exception as e:
-        log("mail_failed", argument=e)
+        if data and "name" in attachment:
+            msg.add_attachment(
+                data,
+                filename=attachment["name"],
+                maintype='text',
+                subtype='csv'
+            )
+
+    #context = ssl.create_default_context()
+    with smtplib.SMTP(SMTPsettings["server"], port=SMTPsettings["port"]) as server:
+        #server.starttls(context=context)
+        server.starttls()
+        server.login(SMTPsettings["user"], SMTPsettings["password"])
+        server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
 
 
-def on_change(bridge, sensor, service, value, changed):
-    global today, plot
+def report(bridge, reset=False):
+    global plot
 
-    # Let's see if a day has passed. It's time to send a new report then
-    date = datetime.now().strftime(day_format)
-    #date = changed.strftime(day_format)
-    if date != today:
-        # Plot the motion profile of the passed day
-        log(today)
-        log("".join(plot))
-        log(timeline)
+    # Plot the motion profile of the passed day
+    log(today)
+    log("".join(plot))
+    log(timeline)
 
-        # Reset the motion profile
+    # Show current power status of all sensors
+    for sensor in bridge.sensors:
+        for service in sensor.services:
+            if service.name == "device_power":
+                service.update()
+                log(service.prompt())
+                break
+
+    # Send the daily report
+    log("report", argument=today)
+
+    html_body = html_report(bridge)
+    html_tables = []
+
+    # Start with an empty list of attachments
+    attachments = []
+
+    # Transform collected sensor data into DataFrame, CSV format
+    for sensor in bridge.sensors:
+        service_dict = {}
+
+        for service in sensor.services:
+            if service.name == "device_power":
+                continue
+
+            service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
+
+        df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
+
+        html_table = df.to_html(index=False, header=True, na_rep='', border=0)
+        html_tables.append(html_table)
+
+        # Attch sensor data as file?
+        if REPORTsettings["attach"]: #or REPORTsettings["store"]:
+            attachment = {}
+
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            file_name = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
+
+            attachment["name"] = file_name
+
+            # Store sensor data locally?
+            if REPORTsettings["store"]:
+                try:
+                    if not os.path.exists(REPORTsettings["store"]):
+                        os.makedirs(REPORTsettings["store"])
+
+                    file_name = os.path.join(REPORTsettings["store"], file_name)
+                    attachment["path"] = file_name
+
+                    df.to_csv(file_name, sep='\t', index=False, header=True)
+
+                except Exception as e:
+                    log(str(e))
+            else:
+                attachment["data"] = df.to_csv(sep='\t', index=False, header=True)
+
+            #if REPORTsettings["attach"]:
+            attachments.append(attachment)
+
+    if html_body:
+        # Insert html_tables into html_body
+        html_body = html_body.format(*html_tables)
+
+        try:
+            sendmail(REPORTsettings["report_to"], REPORTsettings["report_subject"], html_body, subtype="html", attachments=attachments)
+            log("msg_sent")
+
+        except Exception as e:
+            log("msg_failed", argument=e)
+
+    # Reset the motion profile
+    if datetime.now().strftime(day_format) != today or reset:
         plot = list(96*low_chr)
 
-        # Send the daily report
-        log("report", argument=today)
-        html = html_report(bridge, today)
-        sendmail(MSGsettings["recipients"], MSGsettings["report_subject"], html, subtype="html")
-
-        # The first event on a new day will reset the data store of all services
+    # Reset the data store of all services
+    if reset:
         for sensor in bridge.sensors:
             for service in sensor.services:
                 service.reset()
 
-        today = date
 
+def on_change(bridge, sensor, service, changed, value):
     if service.name == 'motion' and value:
         log("motion_detected", argument=sensor.name)
-        if MOTIONsettings["notify"]:
+        if sensor.settings["notify"]:
+
             # Send alert message if no exceptions apply
-            if not check_date(changed.strftime(date_out_format), MOTIONsettings["except"]) and not check_date(changed.strftime(time_format), MOTIONsettings["except_daily"], daily=True):
-                sendmail(MSGsettings["recipients"], MSGsettings["alert_subject"], MSGsettings["alert_text"].format(sensor.name, changed.strftime(time_format)))
+            if not check_date(changed.strftime(date_out_format), sensor.settings["except"]) and not check_date(changed.strftime(time_format), sensor.settings["except_daily"], daily=True):
+                msg_text = sensor.settings["notify_text"].format(sensor.name, changed.strftime(time_format))
+
+                try:
+                    if sensor.settings["notify_to"] and not isinstance(sensor.settings["notify_to"], list):
+                        headers = {
+                            "Title": sensor.settings["notify_subject"]
+                        }
+                        #auth_string= f"{username}:{password}"
+                        #headers["Authorization"] = "Basic " + base64.b64encode(auth_string.encode()).decode()
+                        r = requests.post(sensor.settings["notify_to"], data=msg_text, headers=headers)
+                        r.raise_for_status()
+                    elif sensor.settings["notify_to"]:
+                        sendmail(sensor.settings["notify_to"], sensor.settings["notify_subject"], msg_text)
+                    elif REPORTsettings["report_to"]:
+                        sendmail(REPORTsettings["report_to"], sensor.settings["notify_subject"], msg_text)
+
+                    log("msg_sent")
+
+                except Exception as e:
+                    log("msg_failed", argument=e)
+
             else:
-                log("mail_restricted")
+                log("msg_restricted")
 
         # Update the motion profile
         h = int(changed.strftime("%H"))
@@ -407,11 +586,15 @@ class Bridge():
 
     def __init__(self, ip_address, username=None, onchange=None):
         self.ip            = ip_address
-        self.username      = username or self.__username()
         self.onchange      = onchange
 
-        self.devices       = self.__devices()
-        self.sensors       = [ Sensor(device["id"], device["name"], self) for device in self.devices if device["product_name"] == "Hue motion sensor" ]
+        try:
+            self.username      = username or self.__username()
+            self.devices       = self.__devices()
+
+            self.sensors       = [ Sensor(device["id"], device["name"], self) for device in self.devices if device["product_name"] == "Hue motion sensor" ]
+        except:
+            raise
 
         # We'll need to customize this if name changes
         self.product_name  = "Hue Bridge"
@@ -443,9 +626,8 @@ class Bridge():
                 else:
                     log("invalid_response", argument=url)
 
-            except Exception as e:
-                log("exception", argument=e)
-                break
+            except:
+                raise
 
         return username
 
@@ -458,19 +640,19 @@ class Bridge():
         try:
             response = requests.get(url, headers=headers, timeout=3, verify=False)
 
-            if response and response.status_code == 200:
+            if response.status_code == 200:
                 devices = response.json()["data"]
 
                 for device in devices:
                     if "product_data" and "metadata" in device.keys():
                         device_parm = dict(zip(["id", "product_name", "name"], [device["id"], device["product_data"]["product_name"], device["metadata"]["name"]]))
-
                         device_parms.append(device_parm)
             else:
                 log("invalid_response", argument=url)
+                response.raise_for_status()
 
-        except Exception as e:
-            log("exception", argument=e)
+        except:
+            raise
 
         return device_parms
 
@@ -525,7 +707,6 @@ class Bridge():
                                     else:
                                         service_data = event_data[service.section_name]
 
-                                    #value = service_data[service.value_name]
                                     if service.value_name in service_data.keys():
                                         value = service_data[service.value_name]
                                     else:
@@ -537,35 +718,44 @@ class Bridge():
                                         changed = datetime.now()
 
                                     if self.onchange:
-                                        self.onchange(self, sensor, service, value, changed)
+                                        self.onchange(self, sensor, service, changed, value)
 
-                                    service.update(value=value, changed=changed)
+                                    service.update(changed, value)
                                     log(service.prompt())
 
                     else:
                         log("invalid_response", argument=url)
 
+                except requests.exceptions.ConnectionError:
+                    raise
+
+                except requests.exceptions.Timeout as e:
+                    log("timeout", argument=e)
+                    continue
+
                 except requests.exceptions.RequestException as e:
                     if "timed out" in str(e):
                         log("timeout", argument=url)
+                        continue
                     else:
-                        log("exception", argument=e)
-                        #sys.exit(1)
-                #except requests.exceptions.ChunkedEncodingError as e:
-                #    log("exception", argument=e)
+                        raise
+
                 except KeyError:
                     pass
+
                 except KeyboardInterrupt:
                     break
-                #except Exception as e:
-                #    log("exception", argument=e)
 
 
 class Sensor():
 
     def __init__(self, id, name, owner):
         self.id           = id
+
+        # This is the invidual name the sensor was given in the Hue app
         self.name         = name
+
+        # The Hue bridge the sensor  belongs to
         self.owner        = owner
 
         # We'll need to customize this if name changes
@@ -576,6 +766,9 @@ class Sensor():
 
         self.services     = self.__services()
 
+        # Read indivisual settings from config file - else use dafaults
+        self.settings     = read_sensor_config(self.name)
+
     def __services(self):
         url = f"https://{self.__ip}/clip/v2/resource/device/{self.id}"
         headers = { "hue-application-key": self.__username }
@@ -584,6 +777,7 @@ class Sensor():
 
         try:
             response = requests.get(url, headers=headers, timeout=3, verify=False)
+
             if response and response.status_code == 200:
                 device = response.json()["data"][0]
                 for service in device["services"]:
@@ -627,29 +821,33 @@ class Service():
 
         self.enabled      = self.is_enabled()
 
-        self.value        = None
-        self.changed      = None
         self.data         = []
         self.update()
 
     def prompt(self):
-        #timestamp = (self.changed or datetime.now()).strftime(date_out_format)
-        return f"{self.changed.strftime(date_out_format)} {self.owner.name} {self.description}: {self.value}{self.unit}"
+        if not self.data:
+            return f"{datetime.now().strftime(date_out_format)} {self.owner.name} {self.description}: N/A"
+
+        changed, value = self.data[-1]
+        return f"{changed.strftime(date_out_format)} {self.owner.name} {self.description}: {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{self.unit}"
 
     def reset(self):
         self.data = []
+        self.update()
 
     def is_enabled(self):
         enabled = None
 
         try:
             response = requests.get(self.__url, headers=self.__headers, timeout=3, verify=False)
+
             if response and response.status_code == 200:
                 data = response.json()["data"][0]
                 if "enabled" in data.keys():
                     enabled = data["enabled"]
             else:
                 log("invalid_response", argument=self.__url)
+
         except Exception as e:
             log("exception", argument=e)
 
@@ -661,6 +859,7 @@ class Service():
 
         try:
             response = requests.put(self.__url, json={"enabled": set}, headers=self.__headers, timeout=3, verify=False)
+
             if response and response.status_code == 200:
                 self.enabled = set
                 return True
@@ -672,9 +871,9 @@ class Service():
 
         return False
 
-    def update(self, value=None, changed=None):
+    def update(self, changed=None, value=None):
+        # query latest knwon state or set state if specified
         if changed is None or value is None:
-
             try:
                 response = requests.get(self.__url, headers=self.__headers, timeout=3, verify=False)
 
@@ -706,72 +905,113 @@ class Service():
 
         self.data.append((changed, value))
 
-        self.value   = value
-        self.changed = changed
-
         return
 
 
-class SuspendTimer(Timer):
+class MyTimer(Timer):
     def run(self):
          while not self.finished.wait(self.interval):
              self.function(*self.args, **self.kwargs)
 
 
-def check_exceptions(bridge):
-    if check_date(datetime.now().strftime(date_out_format), MOTIONsettings["except"]) or check_date(datetime.now().strftime(time_format), MOTIONsettings["except_daily"], daily=True):
-         for sensor in bridge.sensors:
-             for service in sensor.services:
-                 if service.enabled:
-                     response = service.enable(False)
-                     if response:
-                         log("suspended", argument=service.name)
-    else:
-         for sensor in bridge.sensors:
-             for service in sensor.services:
-                 if service.enabled is not None and not service.enabled:
-                     response = service.enable()
-                     if response:
-                         log("enabled", argument=service.name)
+def timer_event(bridge):
+    global  today
+
+    # Let's see if a day has passed. It's time to send a new report and set the date
+    if datetime.now().strftime(day_format) != today:
+        report(bridge, reset=True)
+        today = datetime.now().strftime(day_format)
+
+    for sensor in bridge.sensors:
+        if sensor.settings["suspend"]:
+            if check_date(datetime.now().strftime(date_out_format), sensor.settings["except"]) or check_date(datetime.now().strftime(time_format), sensor.settings["except_daily"], daily=True):
+                for service in sensor.services:
+                    if service.enabled:
+                       if service.enable(False):
+                            log("suspended", argument=service.name)
+            else:
+                for service in sensor.services:
+                    if service.enabled is False:
+                        if service.enable():
+                            log("enabled", argument=service.name)
+
+
+def check(ip):
+    try:
+        requests.head(f"http://{ip}", timeout=1)
+        return True
+    except requests.ConnectionError:
+        return False
 
 
 if __name__ == "__main__":
     # Read settings from config file
     cfg = read_config()
     if not cfg:
-       log("No config")
-       sys.exit(1)
+        log("no_config")
+        sys.exit(0)
 
-    # Instantiate our bridge
-    bridge = Bridge(HUEsettings["ip"], username=HUEsettings["key"], onchange=on_change)
-    if not bridge:
-       log("Hue Bridge not accessible")
-       sys.exit(1)
+    time.sleep(15) # wait 15 secs. for bridge to initalize and obtain ip address after reboot
 
-    # If a new key was created, save it in the ini file
-    if not HUEsettings["key"]:
-       save_key(cfg, bridge.username)
+    if not check(HUEsettings["ip"]):
+        try:
+            response = requests.get("https://discovery.meethue.com/", verify=False)
 
-    # Print the last status of all connected sensors & services
-    if bridge.sensors:
-        for sensor in bridge.sensors:
-            status = []
-            log(f"{sensor.product_name}: {sensor.name}")
+            if response and response.status_code == 200:
+                data = response.json()[0]
+                if "internalipaddress" in data.keys():
+                    HUEsettings["ip"] = data["internalipaddress"]
 
-            for service in sensor.services:
-                status.append(service.prompt())
+        except:
+            pass
 
-            for line in sorted(status):
-                log(line)
+    if not check(HUEsettings["ip"]):
+        log("no_response")
+        sys.exit(1)
 
-    if MOTIONsettings["suspend"]:
-        timer = SuspendTimer(60, check_exceptions, args=(bridge,))
+    try:
+        # Instantiate our bridge
+        bridge = Bridge(HUEsettings["ip"], username=HUEsettings["key"], onchange=on_change)
+
+        # If a new key was created, save it in the ini file
+        if not HUEsettings["key"]:
+            save_key(cfg, bridge.username)
+            HUEsettings["key"] = bridge.username
+
+        # Print the current status of all connected sensors & services
+        if bridge.sensors:
+            for sensor in bridge.sensors:
+                status = []
+                log(f"{sensor.product_name}: {sensor.name}")
+
+                for service in sensor.services:
+                    status.append(service.prompt())
+                    if service.enabled is False:
+                        log("suspended", argument=service.name)
+                        # Enable all suspended services if "suspend" option is set to "no"
+                        if not sensor.settings["suspend"]:
+                            if service.enable():
+                                log("enabled", argument=service.name)
+
+                for line in sorted(status):
+                    log(line)
+
+        timer = MyTimer(60, timer_event, args=(bridge,))
         timer.start()
-    else:
-        timer = None
 
-    # Listen for events
-    bridge.events()
+        # Listen for events
+        bridge.events()
 
-    if timer:
-        timer.cancel()
+    except Exception as e:
+        log("exception", argument=e)
+        sys.exit(1)
+
+    finally:
+        try:
+            # Send report
+            report(bridge)
+
+            timer.cancel()
+        except:
+            pass
+
