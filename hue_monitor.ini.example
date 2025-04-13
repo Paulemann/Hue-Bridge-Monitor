@@ -13,31 +13,43 @@ password = secret
 status = Letzer Wert
 event = Neuer Wert
 report = Sende Tagesbericht für {}
-motion_detected = Bewegung am {}-Sensor erkannt
-mail_sent = Nachricht gesendet
-mail_failed = Nachrichtenübermittlung fehlgeschlagen: {}
-mail_restricted = Nachrichtenübermittlung gem Einstellungen eingeschränkt
+motion_detected = Bewegung am Sensor {} erkannt
+msg_sent = Benachrichtigung gesendet
+msg_failed = Benachrichtigung fehlgeschlagen: {}
+msg_suspended = Benachrichtigungen im festgelegten Zeitintervall ausgesetzt
 cfg_not_found = Konfigurationsdatei nicht gefunden: {}
-cfg_write_error = Fehler beim Lesen der Konfiguration: {}
-cfg_read_error = Fehler beim Schreiben der Konfiguration: {}
+cfg_write_error = Fehler beim Schreiben der Konfiguration: {}
+cfg_read_error = Fehler beim Lesen der Konfiguration: {}
 invalid_response = Ungültige Antwort von {}
 timeout = Zeitüberschreitung bei Verbindung zu {}
 exception = Unerwarteter Fehler: {}
-suspended = Service {} wurde temporär deaktiviert
-enabled = Service {} wurde wieder aktiviert
+suspended = Service '{}' wurde temporär deaktiviert
+enabled = Service '{}' wurde wieder aktiviert
+no_config = Keine Konfiguration
+no_response = Keine Antwort oder keine IP-Adresse
 
-[Messaging]
+[Reporting]
 report_subject = Täglicher Bericht - Sensordaten
-alert_subject = Bewegungsalarm
-report_text = Sensordaten vom {}
-alert_text = Der {}-Sensor hat um {} Uhr eine Bewegung erkannt.
-recipients = user@mail.com
+report_to = user@mail.com
+report_header = Sensordaten vom {}
+bridge_ip = Hue Bridge IP-Adresse: {}
+notify_on_motion = Bei Bewegung benachrichtigen: {}
+suspend_services = Während Sperrzeiten Dienste deaktivieren: {}
+suppress_period = Sperrzeiten (Zeitraum): {}
+suppress_daily = Sperrzeiten (Täglich): {}
+on = An
+off = Aus
+attach = no
 
 [Motion Alert]
 notify = yes
+notify_to = https://ntfy.sh/jdjakjlka
+notify_subject = Bewegungsalarm
+notify_text = Der {}-Sensor hat um {} Uhr eine Bewegung erkannt.
 except = 27.08.23 16:00 - 12.09.23 10:00, 01.10.23 16:00 - 14.10.23 10:00
 except_daily = 07:00 - 22:00
 suspend = yes
+
 
 [Service Descriptions]
 device_power = Ladezustand der 2x AAA Batterien
