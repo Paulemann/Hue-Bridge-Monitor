@@ -272,7 +272,9 @@ def read_config():
         for option in config.options("Reporting"):
             value = config.get("Reporting", option)
             if value:
-                if option == "report_to":
+                if option == "attach":
+                    REPORTsettings[option] = config.getboolean("Reporting", option)
+                elif option == "report_to":
                     REPORTsettings[option] = [ r.strip() for r in value.split(',') ]
                 else:
                     REPORTsettings[option] = value
@@ -430,18 +432,23 @@ def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
         msg.set_content(msg_body)
 
     for attachment in attachments or []:
-        data = None
+        if not "path" in attachment:
+            continue
 
-        if "path" in attachment and os.path.isfile(attachment["path"]):
+        filename = os.path.basename(attachment["path"])
+
+        if os.path.isfile(attachment["path"]):
             with open(attachment["path"], "rb") as f:
                 data = f.read()
         elif "data" in attachment:
-            data = attachment["data"].encode("utf-8")
+            data = attachment["data"]
+        else:
+            continue
 
-        if data and "name" in attachment:
+        if data:
             msg.add_attachment(
                 data,
-                filename=attachment["name"],
+                filename=filename,
                 maintype='text',
                 subtype='csv'
             )
@@ -487,40 +494,54 @@ def report(bridge, reset=False):
             if service.name == "device_power":
                 continue
 
-            service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
+            #service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
+            service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
 
         df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
 
         html_table = df.to_html(index=False, header=True, na_rep='', border=0)
         html_tables.append(html_table)
 
-        # Attch sensor data as file?
-        if REPORTsettings["attach"]: #or REPORTsettings["store"]:
+        # Attch sensor data or save as file?
+        if REPORTsettings["attach"] or REPORTsettings["store"]:
             attachment = {}
 
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            file_name = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
+            file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
 
-            attachment["name"] = file_name
-
-            # Store sensor data locally?
+            # Save sensor data locally?
             if REPORTsettings["store"]:
                 try:
-                    if not os.path.exists(REPORTsettings["store"]):
+                    # Is it the name of an existing file?
+                    if os.path.isfile(REPORTsettings["store"]):
+                        file_path = REPORTsettings["store"]
+                    # Is it the name of an existing directory?
+                    elif os.path.isdir(REPORTsettings["store"]):
+                        file_path = os.path.join(REPORTsettings["store"], file_path)
+                    # Let's assume that a "." in the basename specifies the name of (not yet existing) file.
+                    elif "." in  os.path.basename(REPORTsettings["store"]):
+                        file_path = REPORTsettings["store"]
+                        # Create the parent directory if neccessary.
+                        if os.path.sep in REPORTsettings["store"] and not os.path.isdir(REPORTsettings["store"].rsplit(os.path.sep, 1)[0]):
+                            os.makedirs(REPORTsettings["store"].rsplit(os.path.sep, 1)[0])
+                    # If it's neither a file nor an exisitng directory we'll create a directory with the specified name
+                    else:
                         os.makedirs(REPORTsettings["store"])
+                        file_path = os.path.join(REPORTsettings["store"], file_path)
 
-                    file_name = os.path.join(REPORTsettings["store"], file_name)
-                    attachment["path"] = file_name
-
-                    df.to_csv(file_name, sep='\t', index=False, header=True)
+                    if os.path.isfile(file_path):
+                        df.to_csv(file_path, mode='a', sep='\t', index=False, header=False)
+                    else:
+                        df.to_csv(file_path, sep='\t', index=False, header=True)
 
                 except Exception as e:
                     log(str(e))
             else:
-                attachment["data"] = df.to_csv(sep='\t', index=False, header=True)
+                attachment["data"] = df.to_csv(sep='\t', index=False, header=True).encode("utf-8")
 
-            #if REPORTsettings["attach"]:
-            attachments.append(attachment)
+            if REPORTsettings["attach"]:
+                attachment["path"] = file_path
+                attachments.append(attachment)
 
     if html_body:
         # Insert html_tables into html_body

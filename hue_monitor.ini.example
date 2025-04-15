@@ -40,6 +40,7 @@ suppress_daily = Sperrzeiten (Täglich): {}
 on = An
 off = Aus
 attach = no
+store = Reports
 
 [Motion Alert]
 notify = yes
