@@ -12,24 +12,44 @@ import os
 import signal
 #import base64
 #import ssl
+import datetime
+import io
 
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
-from datetime import datetime
 from urllib3.exceptions import InsecureRequestWarning
 
 from threading import Timer
+from configparser import ConfigParser
+from mimetypes import guess_type
 
-from email.utils import formataddr
+from email.utils import formataddr, make_msgid
 from email.header import Header
 from email.message import EmailMessage
-
-from configparser import ConfigParser
 
 #
 # Suppress only the single warning from urllib3 needed.
 #
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+#
+# Set default font sizes for plots (via matplotlib)
+#
+SMALL_SIZE = 8
+MEDIUM_SIZE = 10
+BIGGER_SIZE = 12
+
+plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
+mtime_format = mdates.DateFormatter("%H:%M")
 
 #
 # Handle SIGTERM signal
@@ -85,7 +105,7 @@ day_format_long = "%a, %d.%m.%y"
 time_format     = "%H:%M:%S"
 date_out_format = f"{day_format} {time_format}"
 
-today = datetime.now().strftime(day_format)
+today = datetime.datetime.now().strftime(day_format)
 
 #
 # Read configuration from matching ini file in current directory
@@ -95,36 +115,32 @@ config_file = os.path.splitext(os.path.basename(__file__))[0] + '.ini'
 #
 # Initialize settings. Customize in config file
 #
-HueServices = [
-    {
-        "name":         "device_power",
+HueServices = {
+    "device_power": {
         "description":  "Battery Level",
         "section":      "power_state",
         "value":        "battery_level",
-        "unit":         "%"
+        "unit":         " %"
     },
-    {
-        "name":         "light_level",
+    "light_level": {
         "description":  "Licht Sensor",
         "section":      "light",
         "value":        "light_level",
         "unit":         " Lux"
     },
-    {
-        "name":         "temperature",
+    "temperature": {
         "description":  "Temperature Sensor",
         "section":      "temperature",
         "value":        "temperature",
-        "unit":         "°C"
+        "unit":         " °C"
     },
-    {
-        "name":         "motion",
+    "motion": {
         "description":  "Motion Sensor",
         "section":      "motion",
         "value":        "motion",
         "unit":         ""
     }
-]
+}
 
 LOGsettings = {
     "report":           "Sending daily report for date {}",
@@ -153,6 +169,7 @@ REPORTsettings = {
     "suspend_services": "Suspend services while notifications are suppressed: {}",
     "suppress_period":  "Suppress notifications (Period): {}",
     "suppress_daily":   "Suppress notifications (Daily): {}",
+    "motion_profile":   "Motion Detection Profile (All Sensors)",
     "on":               "On",
     "off":              "Off",
     "attach":		True,
@@ -218,9 +235,9 @@ def read_config():
         # Customize service descriptions to suit your preference/language
         #
         for service in HueServices:
-            value = config.get("Service Descriptions", service["name"])
+            value = config.get("Service Descriptions", service)
             if value:
-                service["description"] = value
+                HueServices[service]["description"] = value
 
         #
         # Customize settings for logging
@@ -345,7 +362,7 @@ def log(message, argument=None):
 
 def utc2local(utc):
     epoch  = time.mktime(utc.timetuple())
-    offset = datetime.fromtimestamp(epoch) - datetime.utcfromtimestamp(epoch)
+    offset = datetime.datetime.fromtimestamp(epoch) - datetime.datetime.utcfromtimestamp(epoch)
     return utc + offset
 
 
@@ -358,11 +375,11 @@ def check_date(date, range, daily=False):
     try:
         interval = [ (x.strip(), y.strip()) for x, y in [ tuple(x.split("-")) for x in [ x.strip() for x in range.split(",") if x != "" ] ] ]
 
-        compare = datetime.strptime(date, format)
+        compare = datetime.datetime.strptime(date, format)
 
         for first, last in interval:
-            start = datetime.strptime(first, format[:len(first)])
-            end = datetime.strptime(last, format[:len(last)])
+            start = datetime.datetime.strptime(first, format[:len(first)])
+            end = datetime.datetime.strptime(last, format[:len(last)])
 
             if start <= compare <= end:
                 return True
@@ -372,7 +389,7 @@ def check_date(date, range, daily=False):
     return False
 
 
-def html_report(bridge, date=today):
+def html_report(bridge, date=today, imageid=None):
     try:
         html = \
 f"""
@@ -380,6 +397,12 @@ f"""
   <body>
     <h1>{REPORTsettings["report_header"].format(date)}</h1>
     <p>{REPORTsettings['bridge_ip'].format(get_ip_address('wlan0'))}</p>
+"""
+
+        if imageid:
+            html += \
+f"""
+    <p><img src="cid:{imageid[1:-1]}" alt="img" /></p>
 """
 
         for sensor in bridge.sensors:
@@ -437,6 +460,12 @@ def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
 
         filename = os.path.basename(attachment["path"])
 
+        if "maintype" in attachment and "subtype" in attachment:
+            maintype = attachment["maintype"]
+            subtype = attachment["subtype"]
+        else:
+            maintype, subtype = guess_type(filename)[0].split('/')
+
         if os.path.isfile(attachment["path"]):
             with open(attachment["path"], "rb") as f:
                 data = f.read()
@@ -446,12 +475,21 @@ def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
             continue
 
         if data:
-            msg.add_attachment(
-                data,
-                filename=filename,
-                maintype='text',
-                subtype='csv'
-            )
+            if "cid" in attachment:
+                #msg.get_payload()[1].add_related(
+                msg.add_related(
+                    data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    cid=attachment["cid"]
+                )
+            else:
+                msg.add_attachment(
+                    data,
+                    filename=filename,
+                    maintype=maintype,
+                    subtype=subtype
+                )
 
     #context = ssl.create_default_context()
     with smtplib.SMTP(SMTPsettings["server"], port=SMTPsettings["port"]) as server:
@@ -461,13 +499,158 @@ def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
         server.sendmail(SMTPsettings["user"], recipients, msg.as_string())
 
 
+def service_profile(service_data, title, filename=None):
+    # Create temperature profile in PNG format
+
+    if len(service_data) < 2:
+        raise Exception("insufficient data")
+
+    x_values = [x for x, _ in service_data]
+    y_values = [y for _, y in service_data]
+
+    # Set figure height to 2.2 inches only
+    plt.figure().set_figheight(2.2)
+    plt.plot(x_values, y_values)
+
+    # Use fixed limits on y-axis / autoscale off
+    left = x_values[-1].replace(hour=0, minute=0, second=0, microsecond=0)
+    right = x_values[-1].replace(hour=23, minute=59, second=59, microsecond=0)
+    plt.xlim(left=left, right=right)
+
+    # Use no margins
+    #plt.margins(x=0, y=0, tight=False)
+    plt.autoscale(enable=None, axis="x", tight=True)
+
+    #plt.xlabel("Time", size=SMALL_SIZE)
+    #plt.ylabel("Temperature", size=SMALL_SIZE)
+    #plt.title("Temperature Profile", size=MEDIUM_SIZE, pad=20)
+    if title:
+        plt.title(title, size=MEDIUM_SIZE, pad=20)
+
+    # Display grid
+    plt.grid(visible=True, which="both", axis="both")
+
+    ax = plt.gca()
+
+    # Don't show the top and right border
+    #ax.spines["top"].set_visible(False)
+    #ax.spines["right"].set_visible(False)
+
+    # Set axis aspect ratio
+    top, bottom = plt.ylim()
+    range = float(bottom - top)
+    aspect = .25/range
+    ax.set_aspect(aspect)
+
+    # Use custom time format
+    ax.xaxis.set_major_formatter(mtime_format)
+
+    # Save as PNG file (or write to IOBuffer)
+    if filename:
+        plt.savefig(filename)
+        img_data = None
+
+    else:
+        with io.BytesIO() as buf:  # use buffer memory
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            img_data = buf.getvalue()
+
+    plt.close()
+
+    return img_data
+
+
+def motion_profile(filename=None):
+    # Create motion profile (all sensors) in PNG format
+
+    today0 = datetime.datetime.strptime(today, day_format)
+
+    x_labels = [(today0 + datetime.timedelta(minutes=15*n)).strftime("%H:%M") for n in range(0, 96)]
+    x_pos    = [n for n in range(0, 96)]
+
+    y_values = [1 if c == high_chr else 0 for c in plot]
+
+    # Add 24:00 data point for better readability
+    #x_labels.append("24:00")
+    #x_pos.append(96)
+    #y_values.append(0)
+
+    # Set figure height to 1.6 inches only
+    plt.figure().set_figheight(1.6)
+    plt.bar(x_pos, y_values, width=1, align="edge")
+
+    # Print labels below x-axis, eevry 3 hrs (96/24 * 3 = 12)
+    plt.xticks(x_pos[0::12], x_labels[0::12], size=SMALL_SIZE)
+
+    # Use fixed limits on y-axis / autoscale off
+    plt.ylim(bottom=0, top=1)
+
+    # Y-axis labels should only be "0" and "1" (or "off" and "on")
+    y_labels = ["0", "1"]
+    y_pos    = [0, 1]
+
+    # Print labels left beside y-axis
+    plt.yticks(y_pos, y_labels, size=SMALL_SIZE)
+
+    # Use no margins
+    #plt.margins(x=0, y=0, tight=False)
+    plt.autoscale(enable=None, axis="x", tight=True)
+
+    #plt.xlabel("Time", size=SMALL_SIZE)
+    #plt.ylabel("Motion", size=SMALL_SIZE)
+    plt.title(REPORTsettings["motion_profile"], size=MEDIUM_SIZE, pad=20)
+
+    ax = plt.gca()
+
+    # Don't show the top and right border
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # Set axis aspect ratio
+    ax.set_aspect(12.0)
+
+    # Save as PNG file (or write to IOBuffer)
+    if filename:
+        plt.savefig(filename)
+        img_data = None
+
+    else:
+        with io.BytesIO() as buf:  # use buffer memory
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            img_data = buf.getvalue()
+
+    plt.close()
+
+    return img_data
+
+
 def report(bridge, reset=False):
     global plot
+
+    # Start with an empty list of attachments
+    attachments = []
 
     # Plot the motion profile of the passed day
     log(today)
     log("".join(plot))
     log(timeline)
+
+    filename = "motion.png"
+    cid = make_msgid() #or f"<{os.path.basename(filename)}>"
+
+    #img_data = motion_profile(filename) # returns None if filename != None
+    img_data = motion_profile()
+
+    attachment = {
+        "maintype": "image",
+        "subtype":  "png",
+        "cid": cid,
+        "path": filename,
+        "data": img_data
+    }
+    attachments.append(attachment)
 
     # Show current power status of all sensors
     for sensor in bridge.sensors:
@@ -480,15 +663,13 @@ def report(bridge, reset=False):
     # Send the daily report
     log("report", argument=today)
 
-    html_body = html_report(bridge)
+    html_body = html_report(bridge, imageid=cid)
     html_tables = []
-
-    # Start with an empty list of attachments
-    attachments = []
 
     # Transform collected sensor data into DataFrame, CSV format
     for sensor in bridge.sensors:
         service_dict = {}
+        cid = None
 
         for service in sensor.services:
             if service.name == "device_power":
@@ -497,16 +678,45 @@ def report(bridge, reset=False):
             #service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
             service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
 
+            if service.name == "temperature":
+                try:
+                    filename = f"{sensor.name} {service.description}.png"
+                    cid = make_msgid() #or f"<{os.path.basename(filename)}>"
+
+                    #img_data = service_profile(service.data, f"{sensor.name}: {service.description} ({service.unit.strip()})", filename)
+                    img_data = service_profile(service.data, f"{sensor.name}: {service.description} ({service.unit.strip()})")
+
+                    attachment = {
+                        "maintype": "image",
+                        "subtype":  "png",
+                        "cid": cid, #place in comment to make this an attachment
+                        "path": filename,
+                        "data": img_data
+                    }
+                    attachments.append(attachment)
+
+                except:
+                    cid = None
+
         df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
 
         html_table = df.to_html(index=False, header=True, na_rep='', border=0)
+        if cid:
+            html_table += \
+f"""
+    <p><img src="cid:{cid[1:-1]}" alt="img" /></p>
+"""
+
         html_tables.append(html_table)
 
-        # Attch sensor data or save as file?
+        # Attach sensor data or save as file?
         if REPORTsettings["attach"] or REPORTsettings["store"]:
-            attachment = {}
+            attachment = {
+                "maintype": "text",
+                "subtype": "csv"
+            }
 
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
             file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
 
             # Save sensor data locally?
@@ -555,7 +765,7 @@ def report(bridge, reset=False):
             log("msg_failed", argument=e)
 
     # Reset the motion profile
-    if datetime.now().strftime(day_format) != today or reset:
+    if datetime.datetime.now().strftime(day_format) != today or reset:
         plot = list(96*low_chr)
 
     # Reset the data store of all services
@@ -734,9 +944,9 @@ class Bridge():
                                         value = None
 
                                     if "changed" in service_data.keys():
-                                        changed = utc2local(datetime.strptime(service_data["changed"], date_in_format))
+                                        changed = utc2local(datetime.datetime.strptime(service_data["changed"], date_in_format))
                                     else:
-                                        changed = datetime.now()
+                                        changed = datetime.datetime.now()
 
                                     if self.onchange:
                                         self.onchange(self, sensor, service, changed, value)
@@ -802,10 +1012,8 @@ class Sensor():
             if response and response.status_code == 200:
                 device = response.json()["data"][0]
                 for service in device["services"]:
-                    index = ([ i for i, svc in enumerate(HueServices) if svc["name"] == service["rtype"] ] or [None])[0]
-
-                    if index is not None:
-                        s = Service(service["rid"], HueServices[index], self)
+                    if service["rtype"] in HueServices:
+                        s = Service(service["rid"], service["rtype"], HueServices[service["rtype"]], self)
                         service_list.append(s)
                     else:
                         continue
@@ -822,15 +1030,15 @@ class Sensor():
 
 class Service():
 
-    def __init__(self, id, service, owner):
+    def __init__(self, id, name, properties, owner):
         self.id = id
+        self.name = name
 
-        self.name         = service["name"]
-        self.description  = service["description"]
-        self.section_name = service["section"]
-        self.report_name  = service["value"] + "_report"
-        self.value_name   = service["value"]
-        self.unit         = service["unit"]
+        self.description  = properties["description"]
+        self.section_name = properties["section"]
+        self.report_name  = properties["value"] + "_report"
+        self.value_name   = properties["value"]
+        self.unit         = properties["unit"]
 
         self.owner        = owner
 
@@ -847,7 +1055,7 @@ class Service():
 
     def prompt(self):
         if not self.data:
-            return f"{datetime.now().strftime(date_out_format)} {self.owner.name} {self.description}: N/A"
+            return f"{datetime.datetime.now().strftime(date_out_format)} {self.owner.name} {self.description}: N/A"
 
         changed, value = self.data[-1]
         return f"{changed.strftime(date_out_format)} {self.owner.name} {self.description}: {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{self.unit}"
@@ -912,9 +1120,9 @@ class Service():
                         value = None
 
                     if "changed" in service_data.keys():
-                        changed = utc2local(datetime.strptime(service_data["changed"], date_in_format))
+                        changed = utc2local(datetime.datetime.strptime(service_data["changed"], date_in_format))
                     else:
-                        changed = datetime.now()
+                        changed = datetime.datetime.now()
 
                 else:
                     log("invalid_response", argument=self.__url)
@@ -939,13 +1147,13 @@ def timer_event(bridge):
     global  today
 
     # Let's see if a day has passed. It's time to send a new report and set the date
-    if datetime.now().strftime(day_format) != today:
+    if datetime.datetime.now().strftime(day_format) != today:
         report(bridge, reset=True)
-        today = datetime.now().strftime(day_format)
+        today = datetime.datetime.now().strftime(day_format)
 
     for sensor in bridge.sensors:
         if sensor.settings["suspend"]:
-            if check_date(datetime.now().strftime(date_out_format), sensor.settings["except"]) or check_date(datetime.now().strftime(time_format), sensor.settings["except_daily"], daily=True):
+            if check_date(datetime.datetime.now().strftime(date_out_format), sensor.settings["except"]) or check_date(datetime.datetime.now().strftime(time_format), sensor.settings["except_daily"], daily=True):
                 for service in sensor.services:
                     if service.enabled:
                        if service.enable(False):
