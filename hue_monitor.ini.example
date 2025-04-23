@@ -37,6 +37,7 @@ notify_on_motion = Bei Bewegung benachrichtigen: {}
 suspend_services = Während Sperrzeiten Dienste deaktivieren: {}
 suppress_period = Sperrzeiten (Zeitraum): {}
 suppress_daily = Sperrzeiten (Täglich): {}
+motion_profile = Bewegungsprofil (Alle Sensoren)
 on = An
 off = Aus
 attach = no
