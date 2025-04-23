@@ -38,6 +38,7 @@ suspend_services = Während Sperrzeiten Dienste deaktivieren: {}
 suppress_period = Sperrzeiten (Zeitraum): {}
 suppress_daily = Sperrzeiten (Täglich): {}
 motion_profile = Bewegungsprofil (Alle Sensoren)
+source = Quelle
 on = An
 off = Aus
 attach = no

@@ -170,6 +170,7 @@ REPORTsettings = {
     "suppress_period":  "Suppress notifications (Period): {}",
     "suppress_daily":   "Suppress notifications (Daily): {}",
     "motion_profile":   "Motion Detection Profile (All Sensors)",
+    "source":           "Source",
     "on":               "On",
     "off":              "Off",
     "attach":		True,
@@ -670,10 +671,14 @@ def report(bridge, reset=False):
     for sensor in bridge.sensors:
         service_dict = {}
         cid = None
+        maxlen = 0
 
         for service in sensor.services:
             if service.name == "device_power":
                 continue
+
+            if len(service.data) > maxlen:
+                maxlen = len(service.data)
 
             #service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
             service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
@@ -698,9 +703,13 @@ def report(bridge, reset=False):
                 except:
                     cid = None
 
+        #service_dict["Source"] = [sensor.name for i in range(0, maxlen)]
+        service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
+        column_headers = list(service_dict.keys())
+
         df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
 
-        html_table = df.to_html(index=False, header=True, na_rep='', border=0)
+        html_table = df.to_html(index=False, header=True, na_rep='', border=0, columns=column_headers[:-1])
         if cid:
             html_table += \
 f"""
@@ -807,10 +816,11 @@ def on_change(bridge, sensor, service, changed, value):
                 log("msg_restricted")
 
         # Update the motion profile
-        h = int(changed.strftime("%H"))
-        m = int(changed.strftime("%M"))
-        plot_index = h*4 + m//15
-        plot[plot_index] = high_chr
+        if changed.strftime(day_format) == today:
+            h = int(changed.strftime("%H"))
+            m = int(changed.strftime("%M"))
+            plot_index = h*4 + m//15
+            plot[plot_index] = high_chr
 
 
 class Bridge():
