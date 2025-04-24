@@ -162,7 +162,6 @@ LOGsettings = {
 
 REPORTsettings = {
     "report_subject":   "Daily Report",
-    "report_to":        [],
     "report_header":    "Sensor data of {}",
     "bridge_ip":        "Hue bridge IP address: {}",
     "notify_on_motion": "Send a notification when movement is detected: {}",
@@ -172,7 +171,11 @@ REPORTsettings = {
     "motion_profile":   "Motion Detection Profile (All Sensors)",
     "source":           "Source",
     "on":               "On",
-    "off":              "Off",
+    "off":              "Off"
+}
+
+DATAsettings = {
+    "report_to":        [],
     "attach":		True,
     "store":		None
 }
@@ -200,6 +203,11 @@ MOTIONsettings = {
     "suspend":          True
 }
 
+#NOTIFYsettings = {
+#    "notify_subject":   "Motion Alert",
+#    "notify_text":      "Sensor \"{}\" detected a motion at {}.",
+#}
+
 
 def get_ip_address(ifname): #ifname = 'eth0' or 'wlan0'
     ip = ''
@@ -221,6 +229,23 @@ def get_ip_address(ifname): #ifname = 'eth0' or 'wlan0'
     return ip
 
 
+def isOpen(ip, port, timeout=3):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+
+    try:
+        s.connect((ip, int(port)))
+        # or
+        #if s.connect_ex((ip, int(port))) == 0: # True if open, False if not
+        s.shutdown(socket.SHUT_RDWR)
+        return True
+
+    except:
+        return False
+
+    finally:
+        s.close()
+
 def read_config():
     if not os.path.exists(config_file):
         log("cfg_not_found", argument=config_file)
@@ -233,20 +258,10 @@ def read_config():
         config.read([os.path.abspath(config_file)])
 
         #
-        # Customize service descriptions to suit your preference/language
+        # Hue Bridge IP and User Name/API Key
         #
-        for service in HueServices:
-            value = config.get("Service Descriptions", service)
-            if value:
-                HueServices[service]["description"] = value
-
-        #
-        # Customize settings for logging
-        #
-        for option in config.options("Logging"):
-            value = config.get("Logging", option)
-            if value:
-                LOGsettings[option] = value
+        HUEsettings["ip"]  = config.get("Hue Bridge", "ip")
+        HUEsettings["key"] = config.get("Hue Bridge", "key")
 
         #
         # Mail account settings
@@ -257,10 +272,18 @@ def read_config():
                 SMTPsettings[option] = value
 
         #
-        # Hue Bridge IP and User Name/API Key
+        # Data handling settings
+        # If receivers ("report_to") list is empty, no E-mail will be sent
         #
-        HUEsettings["ip"]  = config.get("Hue Bridge", "ip")
-        HUEsettings["key"] = config.get("Hue Bridge", "key")
+        for option in config.options("Data Handling"):
+            value = config.get("Data Handling", option)
+            if value:
+                if option == "attach":
+                    DATAsettings[option] = config.getboolean("Data Handling", option)
+                elif option == "report_to" and "@" in value:
+                    DATAsettings[option] = [ r.strip() for r in value.split(',') ]
+                else:
+                    DATAsettings[option] = value
 
         #
         # Set notify on motion events to True if you want alert meesages on motion detection
@@ -284,18 +307,28 @@ def read_config():
         #
 
         #
-        # Report Settings
-        # If receivers ("report_to") list is empty, no E-mail will be sent
+        # Customized service descriptions
+        #
+        for service in HueServices:
+            value = config.get("Service Descriptions", service)
+            if value:
+                HueServices[service]["description"] = value
+
+        #
+        # Customized settings for logging
+        #
+        for option in config.options("Logging"):
+            value = config.get("Logging", option)
+            if value:
+                LOGsettings[option] = value
+
+        #
+        # Customized settings for reporting
         #
         for option in config.options("Reporting"):
             value = config.get("Reporting", option)
             if value:
-                if option == "attach":
-                    REPORTsettings[option] = config.getboolean("Reporting", option)
-                elif option == "report_to":
-                    REPORTsettings[option] = [ r.strip() for r in value.split(',') ]
-                else:
-                    REPORTsettings[option] = value
+                REPORTsettings[option] = value
 
     except Exception as e:
         log("cfg_read_error", argument=e)
@@ -719,7 +752,7 @@ f"""
         html_tables.append(html_table)
 
         # Attach sensor data or save as file?
-        if REPORTsettings["attach"] or REPORTsettings["store"]:
+        if DATAsettings["attach"] or DATAsettings["store"]:
             attachment = {
                 "maintype": "text",
                 "subtype": "csv"
@@ -729,24 +762,24 @@ f"""
             file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
 
             # Save sensor data locally?
-            if REPORTsettings["store"]:
+            if DATAsettings["store"]:
                 try:
                     # Is it the name of an existing file?
-                    if os.path.isfile(REPORTsettings["store"]):
-                        file_path = REPORTsettings["store"]
+                    if os.path.isfile(DATAsettings["store"]):
+                        file_path = DATAsettings["store"]
                     # Is it the name of an existing directory?
-                    elif os.path.isdir(REPORTsettings["store"]):
-                        file_path = os.path.join(REPORTsettings["store"], file_path)
+                    elif os.path.isdir(DATAsettings["store"]):
+                        file_path = os.path.join(DATAsettings["store"], file_path)
                     # Let's assume that a "." in the basename specifies the name of (not yet existing) file.
-                    elif "." in  os.path.basename(REPORTsettings["store"]):
-                        file_path = REPORTsettings["store"]
+                    elif "." in  os.path.basename(DATAsettings["store"]):
+                        file_path = DATAsettings["store"]
                         # Create the parent directory if neccessary.
-                        if os.path.sep in REPORTsettings["store"] and not os.path.isdir(REPORTsettings["store"].rsplit(os.path.sep, 1)[0]):
-                            os.makedirs(REPORTsettings["store"].rsplit(os.path.sep, 1)[0])
+                        if os.path.sep in DATAsettings["store"] and not os.path.isdir(DATAsettings["store"].rsplit(os.path.sep, 1)[0]):
+                            os.makedirs(DATAsettings["store"].rsplit(os.path.sep, 1)[0])
                     # If it's neither a file nor an exisitng directory we'll create a directory with the specified name
                     else:
-                        os.makedirs(REPORTsettings["store"])
-                        file_path = os.path.join(REPORTsettings["store"], file_path)
+                        os.makedirs(DATAsettings["store"])
+                        file_path = os.path.join(DATAsettings["store"], file_path)
 
                     if os.path.isfile(file_path):
                         df.to_csv(file_path, mode='a', sep='\t', index=False, header=False)
@@ -758,7 +791,7 @@ f"""
             else:
                 attachment["data"] = df.to_csv(sep='\t', index=False, header=True).encode("utf-8")
 
-            if REPORTsettings["attach"]:
+            if DATAsettings["attach"]:
                 attachment["path"] = file_path
                 attachments.append(attachment)
 
@@ -767,7 +800,7 @@ f"""
         html_body = html_body.format(*html_tables)
 
         try:
-            sendmail(REPORTsettings["report_to"], REPORTsettings["report_subject"], html_body, subtype="html", attachments=attachments)
+            sendmail(DATAsettings["report_to"], REPORTsettings["report_subject"], html_body, subtype="html", attachments=attachments)
             log("msg_sent")
 
         except Exception as e:
@@ -804,8 +837,8 @@ def on_change(bridge, sensor, service, changed, value):
                         r.raise_for_status()
                     elif sensor.settings["notify_to"]:
                         sendmail(sensor.settings["notify_to"], sensor.settings["notify_subject"], msg_text)
-                    elif REPORTsettings["report_to"]:
-                        sendmail(REPORTsettings["report_to"], sensor.settings["notify_subject"], msg_text)
+                    elif DATAsettings["report_to"]:
+                        sendmail(DATAsettings["report_to"], sensor.settings["notify_subject"], msg_text)
 
                     log("msg_sent")
 
@@ -1190,7 +1223,13 @@ if __name__ == "__main__":
         log("no_config")
         sys.exit(0)
 
-    time.sleep(15) # wait 15 secs. for bridge to initalize and obtain ip address after reboot
+    #time.sleep(15) # wait 15 secs. for bridge to initalize and obtain ip address after reboot
+    start_time = time.time()
+    while int(time.time() - start_time) < 20:
+        if isOpen(HUEsettings["ip"], 80, 1)
+            break
+        else:
+            time.sleep(5)
 
     if not check(HUEsettings["ip"]):
         try:
