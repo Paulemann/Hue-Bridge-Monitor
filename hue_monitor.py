@@ -1226,7 +1226,7 @@ if __name__ == "__main__":
     #time.sleep(15) # wait 15 secs. for bridge to initalize and obtain ip address after reboot
     start_time = time.time()
     while int(time.time() - start_time) < 20:
-        if isOpen(HUEsettings["ip"], 80, 1)
+        if isOpen(HUEsettings["ip"], 80, 1):
             break
         else:
             time.sleep(5)
