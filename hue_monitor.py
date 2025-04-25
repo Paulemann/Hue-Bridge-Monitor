@@ -100,10 +100,11 @@ date_in_format  = "%Y-%m-%dT%H:%M:%S.%fZ"
 #
 # Date format used for reporting & logging
 #
-day_format      = "%d.%m.%y"
-day_format_long = "%a, %d.%m.%y"
-time_format     = "%H:%M:%S"
+day_format      = "%d.%m.%y" # must not contain spaces
+time_format     = "%H:%M:%S" # must not contain spaces
 date_out_format = f"{day_format} {time_format}"
+
+day_format_long = "%a, %d.%m.%y"
 
 today = datetime.datetime.now().strftime(day_format)
 
@@ -1267,9 +1268,11 @@ def read_csv(bridge):
             # Select the filtered column for this specific service
             service_data = list(df_service[service.description])
 
+            n = len(date_out_format.split())
+
             if service_data:
                 if service.name == "motion":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), True if x.split()[2] == REPORTsettings["on"] else False) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), True if x.split()[n] == REPORTsettings["on"] else False) for x in service_data]
 
                     for changed, value in service.data:
                         if value and changed.strftime(day_format) == today:
@@ -1279,10 +1282,10 @@ def read_csv(bridge):
                             plot[plot_index] = high_chr
 
                 elif service.name == "temperature":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), float(x.split()[2])) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), float(x.split()[n])) for x in service_data]
 
                 elif service.name == "light_level":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), int(x.split()[2])) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), int(x.split()[n])) for x in service_data]
 
                 service.last_saved = service.data[-1][0]
 
