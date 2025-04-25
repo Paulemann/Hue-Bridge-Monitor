@@ -120,19 +120,19 @@ HueServices = {
         "description":  "Battery Level",
         "section":      "power_state",
         "value":        "battery_level",
-        "unit":         " %"
+        "unit":         "%"
     },
     "light_level": {
         "description":  "Licht Sensor",
         "section":      "light",
         "value":        "light_level",
-        "unit":         " Lux"
+        "unit":         "Lux"
     },
     "temperature": {
         "description":  "Temperature Sensor",
         "section":      "temperature",
         "value":        "temperature",
-        "unit":         " °C"
+        "unit":         "°C"
     },
     "motion": {
         "description":  "Motion Sensor",
@@ -157,7 +157,8 @@ LOGsettings = {
     "suspended":        "Service '{}' temporarily disabled",
     "enabled":          "Service '{}' re-enabled",
     "no_config":        "No configuration",
-    "no_response":      "No response or no IP address"
+    "no_response":      "No response or no IP address",
+    "data_read":        "Successfully read data from {}"
 }
 
 REPORTsettings = {
@@ -202,11 +203,6 @@ MOTIONsettings = {
     "except_daily":     "",
     "suspend":          True
 }
-
-#NOTIFYsettings = {
-#    "notify_subject":   "Motion Alert",
-#    "notify_text":      "Sensor \"{}\" detected a motion at {}.",
-#}
 
 
 def get_ip_address(ifname): #ifname = 'eth0' or 'wlan0'
@@ -450,7 +446,7 @@ f"""
     <p>{REPORTsettings['suspend_services'].format(REPORTsettings['on'] if sensor.settings['suspend'] else REPORTsettings['off'])}</p>
     <p>{REPORTsettings['suppress_period'].format(sensor.settings['except'])}</p>
     <p>{REPORTsettings['suppress_daily'].format(sensor.settings['except_daily'])}</p>
-    <p>{power_service.description}: {power_service.data[-1][1]}{power_service.unit}</p>
+    <p>{power_service.description}: {power_service.data[-1][1]} {power_service.unit}</p>
     {{}}
 """
 
@@ -510,7 +506,6 @@ def sendmail(recipients, subject, msg_body, subtype=None, attachments=None):
 
         if data:
             if "cid" in attachment:
-                #msg.get_payload()[1].add_related(
                 msg.add_related(
                     data,
                     maintype=maintype,
@@ -547,8 +542,8 @@ def service_profile(service_data, title, filename=None):
     plt.plot(x_values, y_values)
 
     # Use fixed limits on y-axis / autoscale off
-    left = x_values[-1].replace(hour=0, minute=0, second=0, microsecond=0)
-    right = x_values[-1].replace(hour=23, minute=59, second=59, microsecond=0)
+    left = datetime.datetime.strptime(today, day_format)
+    right = left.replace(hour=23, minute=59, second=59, microsecond=0)
     plt.xlim(left=left, right=right)
 
     # Use no margins
@@ -557,7 +552,6 @@ def service_profile(service_data, title, filename=None):
 
     #plt.xlabel("Time", size=SMALL_SIZE)
     #plt.ylabel("Temperature", size=SMALL_SIZE)
-    #plt.title("Temperature Profile", size=MEDIUM_SIZE, pad=20)
     if title:
         plt.title(title, size=MEDIUM_SIZE, pad=20)
 
@@ -710,11 +704,16 @@ def report(bridge, reset=False):
             if service.name == "device_power":
                 continue
 
-            if len(service.data) > maxlen:
-                maxlen = len(service.data)
+            if service.unit:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data]
+            else:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data]
 
-            #service_dict[service.description] = [f"{changed.strftime(time_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
-            service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{service.unit}" for changed, value in service.data]
+            # Cleanup: use only items of today
+            service_dict[service.description] = [item for item in service_dict[service.description] if item.startswith(today)]
+
+            if len(service_dict[service.description]) > maxlen:
+                maxlen = len(service_dict[service.description])
 
             if service.name == "temperature":
                 try:
@@ -736,7 +735,6 @@ def report(bridge, reset=False):
                 except:
                     cid = None
 
-        #service_dict["Source"] = [sensor.name for i in range(0, maxlen)]
         service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
         column_headers = list(service_dict.keys())
 
@@ -758,7 +756,8 @@ f"""
                 "subtype": "csv"
             }
 
-            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            ts = datetime.datetime.strptime(today, day_format)
+            timestamp = ts.strftime("%y") + ts.strftime("%m") + ts.strftime("%d") # reverse today's date
             file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
 
             # Save sensor data locally?
@@ -782,6 +781,28 @@ f"""
                         file_path = os.path.join(DATAsettings["store"], file_path)
 
                     if os.path.isfile(file_path):
+                        if service.last_saved:
+                            maxlen = 0
+
+                            for service in sensor.services:
+                                if service.name == "device_power":
+                                    continue
+
+                                if service.unit:
+                                    service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data if changed > service.last_saved]
+                                else:
+                                    service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data if changed > service.last_saved]
+
+                                # Cleanup: use only items of today
+                                #service_dict[service.description] = [item for item in service_dict[service.description] if item.startswith(today)]
+
+                                if len(service_dict[service.description]) > maxlen:
+                                    maxlen = len(service_dict[service.description])
+
+                            service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
+
+                            df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
+
                         df.to_csv(file_path, mode='a', sep='\t', index=False, header=False)
                     else:
                         df.to_csv(file_path, sep='\t', index=False, header=True)
@@ -1094,6 +1115,7 @@ class Service():
         self.enabled      = self.is_enabled()
 
         self.data         = []
+        self.last_saved   = None
         self.update()
 
     def prompt(self):
@@ -1101,7 +1123,11 @@ class Service():
             return f"{datetime.datetime.now().strftime(date_out_format)} {self.owner.name} {self.description}: N/A"
 
         changed, value = self.data[-1]
-        return f"{changed.strftime(date_out_format)} {self.owner.name} {self.description}: {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}{self.unit}"
+
+        if self.unit:
+            return f"{changed.strftime(date_out_format)} {self.owner.name} {self.description}: {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {self.unit}"
+        else:
+            return f"{changed.strftime(date_out_format)} {self.owner.name} {self.description}: {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}"
 
     def reset(self):
         self.data = []
@@ -1216,6 +1242,56 @@ def check(ip):
         return False
 
 
+def read_csv(bridge):
+    for sensor in bridge.sensors or []:
+        timestamp = today[6:8] + today[3:5] + today[:2] # reverse today's date
+        file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
+
+        if os.path.isfile(DATAsettings["store"]):
+            file_path = DATAsettings["store"]
+
+        elif os.path.isdir(DATAsettings["store"]):
+            file_path = os.path.join(DATAsettings["store"], file_path)
+
+            if not os.path.isfile(file_path):
+                return
+
+        df = pd.read_csv(file_path, sep="\t")
+
+        for service in sensor.services:
+            if service.name == "device_power":
+                continue
+
+            # Filter the rows which match criteria for the specific service: only today's data and source is sensor
+            df_service = df[df[service.description].str.startswith(today) & (df[REPORTsettings["source"]] == sensor.name)]
+            # Select the filtered column for this specific service
+            service_data = list(df_service[service.description])
+
+            if service_data:
+                if service.name == "motion":
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), True if x.split()[2] == REPORTsettings["on"] else False) for x in service_data]
+
+                    for changed, value in service.data:
+                        if value and changed.strftime(day_format) == today:
+                            h = int(changed.strftime("%H"))
+                            m = int(changed.strftime("%M"))
+                            plot_index = h*4 + m//15
+                            plot[plot_index] = high_chr
+
+                elif service.name == "temperature":
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), float(x.split()[2])) for x in service_data]
+
+                elif service.name == "light_level":
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:2]), date_out_format), int(x.split()[2])) for x in service_data]
+
+                service.last_saved = service.data[-1][0]
+
+            else:
+                service.update()
+
+        log("data_read", argument=os.path.basename(file_path))
+
+
 if __name__ == "__main__":
     # Read settings from config file
     cfg = read_config()
@@ -1223,7 +1299,6 @@ if __name__ == "__main__":
         log("no_config")
         sys.exit(0)
 
-    #time.sleep(15) # wait 15 secs. for bridge to initalize and obtain ip address after reboot
     start_time = time.time()
     while int(time.time() - start_time) < 20:
         if isOpen(HUEsettings["ip"], 80, 1):
@@ -1255,6 +1330,10 @@ if __name__ == "__main__":
         if not HUEsettings["key"]:
             save_key(cfg, bridge.username)
             HUEsettings["key"] = bridge.username
+
+        # Read today's saved data from csv file(s) - if exist:
+        if DATAsettings["store"]:
+            read_csv(bridge)
 
         # Print the current status of all connected sensors & services
         if bridge.sensors:

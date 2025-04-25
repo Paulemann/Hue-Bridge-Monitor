@@ -43,6 +43,7 @@ suspended = Service '{}' wurde temporär deaktiviert
 enabled = Service '{}' wurde wieder aktiviert
 no_config = Keine Konfiguration
 no_response = Keine Antwort oder keine IP-Adresse
+data_read = Daten wurden erfolgreich von {} gelesen
 
 [Reporting]
 report_subject = Täglicher Bericht - Sensordaten
