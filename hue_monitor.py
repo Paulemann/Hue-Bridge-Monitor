@@ -420,13 +420,13 @@ def check_date(date, range, daily=False):
     return False
 
 
-def html_report(bridge, date=today, imageid=None):
+def html_report(bridge, datestr, imageid=None):
     try:
         html = \
 f"""
 <html>{HTMLheader}
   <body>
-    <h1>{REPORTsettings["report_header"].format(date)}</h1>
+    <h1>{REPORTsettings["report_header"].format(datestr)}</h1>
     <p>{REPORTsettings['bridge_ip'].format(get_ip_address('wlan0'))}</p>
 """
 
@@ -692,7 +692,7 @@ def report(bridge, reset=False):
     # Send the daily report
     log("report", argument=today)
 
-    html_body = html_report(bridge, imageid=cid)
+    html_body = html_report(bridge, today, imageid=cid)
     html_tables = []
 
     # Transform collected sensor data into DataFrame, CSV format
