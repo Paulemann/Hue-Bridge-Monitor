@@ -118,91 +118,92 @@ config_file = os.path.splitext(os.path.basename(__file__))[0] + '.ini'
 #
 HueServices = {
     "device_power": {
-        "description":  "Battery Level",
-        "section":      "power_state",
-        "value":        "battery_level",
-        "unit":         "%"
+        "description":   "Battery Level",
+        "section":       "power_state",
+        "value":         "battery_level",
+        "unit":          "%"
     },
     "light_level": {
-        "description":  "Licht Sensor",
-        "section":      "light",
-        "value":        "light_level",
-        "unit":         "Lux"
+        "description":   "Licht Sensor",
+        "section":       "light",
+        "value":         "light_level",
+        "unit":          "Lux"
     },
     "temperature": {
-        "description":  "Temperature Sensor",
-        "section":      "temperature",
-        "value":        "temperature",
-        "unit":         "°C"
+        "description":   "Temperature Sensor",
+        "section":       "temperature",
+        "value":         "temperature",
+        "unit":          "°C"
     },
     "motion": {
-        "description":  "Motion Sensor",
-        "section":      "motion",
-        "value":        "motion",
-        "unit":         ""
+        "description":   "Motion Sensor",
+        "section":       "motion",
+        "value":         "motion",
+        "unit":          ""
     }
 }
 
 LOGsettings = {
-    "report":           "Sending daily report for date {}",
-    "motion_detected":  "Motion detected by sensor {}",
-    "msg_sent":         "Message sent",
-    "msg_failed":       "Message delivery failed: {}",
-    "msg_suspended ":   "Message delivery suspended at specified time interval",
-    "cfg_not_found":    "Configuration file not found: {}",
-    "cfg_write_error":  "Error writing configuration: {}",
-    "cfg_read_error":   "Error reading configuration: {}",
-    "invalid_response": "Invalid response from {}",
-    "timeout":          "Connection to {} timed out",
-    "exception":        "Unexpected error: {}",
-    "suspended":        "Service '{}' temporarily disabled",
-    "enabled":          "Service '{}' re-enabled",
-    "no_config":        "No configuration",
-    "no_response":      "No response or no IP address",
-    "data_read":        "Successfully read data from {}"
+    "report":            "Sending daily report for date {}",
+    "motion_detected":   "Motion detected by sensor {}",
+    "msg_sent":          "Message sent",
+    "msg_failed":        "Message delivery failed: {}",
+    "msg_suspended ":    "Message delivery suspended at specified time interval",
+    "cfg_not_found":     "Configuration file not found: {}",
+    "cfg_write_error":   "Error writing configuration: {}",
+    "cfg_read_error":    "Error reading configuration: {}",
+    "invalid_response":  "Invalid response from {}",
+    "timeout":           "Connection to {} timed out",
+    "exception":         "Unexpected error: {}",
+    "suspended":         "Service '{}' temporarily disabled",
+    "enabled":           "Service '{}' re-enabled",
+    "no_config":         "No configuration",
+    "no_response":       "No response or no IP address",
+    "data_read_success": "Successfully read data for service {} from file {}",
+    "data_read_failed":  "Reading data for service {} from file {} failed"
 }
 
 REPORTsettings = {
-    "report_subject":   "Daily Report",
-    "report_header":    "Sensor data of {}",
-    "bridge_ip":        "Hue bridge IP address: {}",
-    "notify_on_motion": "Send a notification when movement is detected: {}",
-    "suspend_services": "Suspend services while notifications are suppressed: {}",
-    "suppress_period":  "Suppress notifications (Period): {}",
-    "suppress_daily":   "Suppress notifications (Daily): {}",
-    "motion_profile":   "Motion Detection Profile (All Sensors)",
-    "source":           "Source",
-    "on":               "On",
-    "off":              "Off"
+    "report_subject":    "Daily Report",
+    "report_header":     "Sensor data of {}",
+    "bridge_ip":         "Hue bridge IP address: {}",
+    "notify_on_motion":  "Send a notification when movement is detected: {}",
+    "suspend_services":  "Suspend services while notifications are suppressed: {}",
+    "suppress_period":   "Suppress notifications (Period): {}",
+    "suppress_daily":    "Suppress notifications (Daily): {}",
+    "motion_profile":    "Motion Detection Profile (All Sensors)",
+    "source":            "Source",
+    "on":                "On",
+    "off":               "Off"
 }
 
 DATAsettings = {
-    "report_to":        [],
-    "attach":		True,
-    "store":		None
+    "report_to":         [],
+    "attach":		 True,
+    "store":		 None
 }
 
 SMTPsettings = {
-    "user":             "user@mail.com",
-    "name":             "Hue Bridge",
-    "password":         "password",
-    "server":           "smtp.mail.com",
-    "port":             587
+    "user":              "user@mail.com",
+    "name":              "Hue Bridge",
+    "password":          "password",
+    "server":            "smtp.mail.com",
+    "port":              587
 }
 
 HUEsettings = {
-    "ip":               "192.168.178.100",
-    "key":              None
+    "ip":                "10.1.1.2",
+    "key":               None
 }
 
 MOTIONsettings = {
-    "notify":           False,
-    "notify_to":        "",
-    "notify_subject":   "Motion Alert",
-    "notify_text":      "Sensor \"{}\" detected a motion at {}.",
-    "except":           "",
-    "except_daily":     "",
-    "suspend":          True
+    "notify":            False,
+    "notify_to":         "",
+    "notify_subject":    "Motion Alert",
+    "notify_text":       "Sensor \"{}\" detected a motion at {}.",
+    "except":            "",
+    "except_daily":      "",
+    "suspend":           True
 }
 
 
@@ -1244,14 +1245,18 @@ def check(ip):
 
 
 def read_csv(bridge):
+    spos = len(date_out_format.split())
+
+    timestamp = today[6:8] + today[3:5] + today[:2] # reverse today's date
+    file_path = None
+
+    if os.path.isfile(DATAsettings["store"]):
+        file_path = DATAsettings["store"]
+
     for sensor in bridge.sensors or []:
-        timestamp = today[6:8] + today[3:5] + today[:2] # reverse today's date
-        file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
 
-        if os.path.isfile(DATAsettings["store"]):
-            file_path = DATAsettings["store"]
-
-        elif os.path.isdir(DATAsettings["store"]):
+        if not file_path and os.path.isdir(DATAsettings["store"]):
+            file_path = f"{bridge.name}_{sensor.name}_{timestamp}.csv"
             file_path = os.path.join(DATAsettings["store"], file_path)
 
             if not os.path.isfile(file_path):
@@ -1263,16 +1268,19 @@ def read_csv(bridge):
             if service.name == "device_power":
                 continue
 
-            # Filter the rows which match criteria for the specific service: only today's data and source is sensor
-            df_service = df[df[service.description].str.startswith(today) & (df[REPORTsettings["source"]] == sensor.name)]
-            # Select the filtered column for this specific service
-            service_data = list(df_service[service.description])
+            try:
+                # Filter the rows which match criteria for the specific service: only today's data and source is sensor
+                df_service = df[df[service.description].str.startswith(today) & (df[REPORTsettings["source"]] == sensor.name)]
+                # Select the filtered column for this specific service
+                service_data = list(df_service[service.description])
 
-            n = len(date_out_format.split())
+            except:
+                log("data_read_failed", argument=os.path.basename(service.description, file_path))
+                continue
 
             if service_data:
                 if service.name == "motion":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), True if x.split()[n] == REPORTsettings["on"] else False) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:spos]), date_out_format), True if x.split()[spos] == REPORTsettings["on"] else False) for x in service_data]
 
                     for changed, value in service.data:
                         if value and changed.strftime(day_format) == today:
@@ -1282,17 +1290,14 @@ def read_csv(bridge):
                             plot[plot_index] = high_chr
 
                 elif service.name == "temperature":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), float(x.split()[n])) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:spos]), date_out_format), float(x.split()[spos])) for x in service_data]
 
                 elif service.name == "light_level":
-                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:n]), date_out_format), int(x.split()[n])) for x in service_data]
+                    service.data = [(datetime.datetime.strptime(" ".join(x.split()[:spos]), date_out_format), int(x.split()[spos])) for x in service_data]
 
                 service.last_saved = service.data[-1][0]
 
-            else:
-                service.update()
-
-        log("data_read", argument=os.path.basename(file_path))
+                log("data_read_success", argument=os.path.basename(service.description, file_path))
 
 
 if __name__ == "__main__":
