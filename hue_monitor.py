@@ -159,8 +159,8 @@ LOGsettings = {
     "enabled":           "Service '{}' re-enabled",
     "no_config":         "No configuration",
     "no_response":       "No response or no IP address",
-    "data_read_success": "Successfully read data for service {} from file {}",
-    "data_read_failed":  "Reading data for service {} from file {} failed"
+    "data_read_success": "Successfully read saved data for service {}",
+    "data_read_failed":  "Reading saved data for service {} failed"
 }
 
 REPORTsettings = {
@@ -1275,7 +1275,7 @@ def read_csv(bridge):
                 service_data = list(df_service[service.description])
 
             except:
-                log("data_read_failed", argument=os.path.basename(service.description, file_path))
+                log("data_read_failed", argument=f"{sensor.name}:{service.description}")
                 continue
 
             if service_data:
@@ -1297,7 +1297,7 @@ def read_csv(bridge):
 
                 service.last_saved = service.data[-1][0]
 
-                log("data_read_success", argument=os.path.basename(service.description, file_path))
+                log("data_read_success", argument=f"{sensor.name}:{service.description}")
 
 
 if __name__ == "__main__":
