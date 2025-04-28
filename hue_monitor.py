@@ -66,7 +66,7 @@ signal.signal(signal.SIGTERM, sigterm_handler)
 #
 low_chr  = chr(0x2581)
 high_chr = chr(0x2588)
-plot     = list(96*low_chr)
+#plot     = list(96*low_chr)
 timeline = (10*' ').join(['0', '03', '06', '09', '12', '15', '18', '21', '24'])
 
 #
@@ -166,7 +166,7 @@ LOGsettings = {
 REPORTsettings = {
     "report_subject":    "Daily Report",
     "report_header":     "Sensor data of {}",
-    "bridge_ip":         "Hue bridge IP address: {}",
+    "bridge_ip":         "Hue bridge/Gateway IP address: {}/{}",
     "notify_on_motion":  "Send a notification when movement is detected: {}",
     "suspend_services":  "Suspend services while notifications are suppressed: {}",
     "suppress_period":   "Suppress notifications (Period): {}",
@@ -428,7 +428,7 @@ f"""
 <html>{HTMLheader}
   <body>
     <h1>{REPORTsettings["report_header"].format(datestr)}</h1>
-    <p>{REPORTsettings['bridge_ip'].format(get_ip_address('wlan0'))}</p>
+    <p>{REPORTsettings['bridge_ip'].format(HUEsettings["ip"], get_ip_address('wlan0'))}</p>
 """
 
         if imageid:
@@ -438,7 +438,11 @@ f"""
 """
 
         for sensor in bridge.sensors:
-            power_service = [s for s in sensor.services if s.name == "device_power"][0]
+            for service in sensor.services:
+                if service.name == "device_power":
+                    power_service = service
+                    break
+
             power_service.update()
 
             html += \
@@ -591,7 +595,7 @@ def service_profile(service_data, title, filename=None):
     return img_data
 
 
-def motion_profile(filename=None):
+def motion_profile(plotdata, filename=None):
     # Create motion profile (all sensors) in PNG format
 
     today0 = datetime.datetime.strptime(today, day_format)
@@ -599,7 +603,7 @@ def motion_profile(filename=None):
     x_labels = [(today0 + datetime.timedelta(minutes=15*n)).strftime("%H:%M") for n in range(0, 96)]
     x_pos    = [n for n in range(0, 96)]
 
-    y_values = [1 if c == high_chr else 0 for c in plot]
+    y_values = [1 if c == high_chr else 0 for c in plotdata]
 
     # Add 24:00 data point for better readability
     #x_labels.append("24:00")
@@ -657,21 +661,38 @@ def motion_profile(filename=None):
 
 
 def report(bridge, reset=False):
-    global plot
-
     # Start with an empty list of attachments
     attachments = []
 
-    # Plot the motion profile of the passed day
     log(today)
+
+    plot = list(96*low_chr)
+
+    for sensor in bridge.sensors or []:
+        for service in sensor.services:
+            # Show current power status of all sensors
+            if service.name == "device_power":
+                service.update()
+                log(service.prompt())
+
+            # Get the motion profile of the passed day
+            if service.name == "motion":
+                for changed, value in service.data:
+                    if value and changed.strftime(day_format) == today:
+                        h = int(changed.strftime("%H"))
+                        m = int(changed.strftime("%M"))
+                        plot_index = h*4 + m//15   # plot_index = h*n//24 + m//(60//(n//24))
+                        plot[plot_index] = high_chr
+
+    # Plot the motion profile
     log("".join(plot))
     log(timeline)
 
     filename = "motion.png"
     cid = make_msgid() #or f"<{os.path.basename(filename)}>"
 
-    #img_data = motion_profile(filename) # returns None if filename != None
-    img_data = motion_profile()
+    #img_data = motion_profile(plot, filename) # returns None if filename != None
+    img_data = motion_profile(plot)
 
     attachment = {
         "maintype": "image",
@@ -681,14 +702,6 @@ def report(bridge, reset=False):
         "data": img_data
     }
     attachments.append(attachment)
-
-    # Show current power status of all sensors
-    for sensor in bridge.sensors:
-        for service in sensor.services:
-            if service.name == "device_power":
-                service.update()
-                log(service.prompt())
-                break
 
     # Send the daily report
     log("report", argument=today)
@@ -829,10 +842,6 @@ f"""
         except Exception as e:
             log("msg_failed", argument=e)
 
-    # Reset the motion profile
-    if datetime.datetime.now().strftime(day_format) != today or reset:
-        plot = list(96*low_chr)
-
     # Reset the data store of all services
     if reset:
         for sensor in bridge.sensors:
@@ -870,13 +879,6 @@ def on_change(bridge, sensor, service, changed, value):
 
             else:
                 log("msg_restricted")
-
-        # Update the motion profile
-        if changed.strftime(day_format) == today:
-            h = int(changed.strftime("%H"))
-            m = int(changed.strftime("%M"))
-            plot_index = h*4 + m//15
-            plot[plot_index] = high_chr
 
 
 class Bridge():
@@ -953,7 +955,7 @@ class Bridge():
 
         return device_parms
 
-    def update(self):
+    def reset(self):
         self.devices = self.__devices()
 
         for sensor in self.sensors:
@@ -1203,7 +1205,8 @@ class Service():
                 log("exception", argument=e)
                 return
 
-        self.data.append((changed, value))
+        if not self.data or changed > self.data[-1][0]:
+            self.data.append((changed, value))
 
         return
 
@@ -1281,13 +1284,6 @@ def read_csv(bridge):
             if service_data:
                 if service.name == "motion":
                     service.data = [(datetime.datetime.strptime(" ".join(x.split()[:spos]), date_out_format), True if x.split()[spos] == REPORTsettings["on"] else False) for x in service_data]
-
-                    for changed, value in service.data:
-                        if value and changed.strftime(day_format) == today:
-                            h = int(changed.strftime("%H"))
-                            m = int(changed.strftime("%M"))
-                            plot_index = h*4 + m//15
-                            plot[plot_index] = high_chr
 
                 elif service.name == "temperature":
                     service.data = [(datetime.datetime.strptime(" ".join(x.split()[:spos]), date_out_format), float(x.split()[spos])) for x in service_data]
