@@ -67,6 +67,7 @@ signal.signal(signal.SIGTERM, sigterm_handler)
 low_chr  = chr(0x2581)
 high_chr = chr(0x2588)
 #plot     = list(96*low_chr)
+#plot     = [high_chr if x else low_chr for x in lista] when lista = [False, True, True, False, False, ...]
 timeline = (10*' ').join(['0', '03', '06', '09', '12', '15', '18', '21', '24'])
 
 #
@@ -160,7 +161,8 @@ LOGsettings = {
     "no_config":         "No configuration",
     "no_response":       "No response or no IP address",
     "data_read_success": "Successfully read saved data for service {}",
-    "data_read_failed":  "Reading saved data for service {} failed"
+    "data_read_failed":  "Reading saved data for service {} failed",
+    "no_data":           "No saved data for service {}"
 }
 
 REPORTsettings = {
@@ -660,6 +662,39 @@ def motion_profile(plotdata, filename=None):
     return img_data
 
 
+def sensor_data2df(sensor, update=False):
+    service_dict = {}
+    maxlen = 0
+
+    for service in sensor.services:
+        if service.name == "device_power":
+            continue
+
+        if update and service.last_saved:
+            if service.unit:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data if changed > service.last_saved]
+            else:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data if changed > service.last_saved]
+
+        else:
+            if service.unit:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data]
+            else:
+                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data]
+
+        # Cleanup: use only items of today
+        service_dict[service.description] = [item for item in service_dict[service.description] if item.startswith(today)]
+
+        if len(service_dict[service.description]) > maxlen:
+             maxlen = len(service_dict[service.description])
+
+    service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
+
+    df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
+
+    return df
+
+
 def report(bridge, reset=False):
     # Start with an empty list of attachments
     attachments = []
@@ -667,6 +702,7 @@ def report(bridge, reset=False):
     log(today)
 
     plot = list(96*low_chr)
+    #plot = [high_chr if x else low_chr for x in lista] when lista = [False, True, True, False, False, ...]
 
     for sensor in bridge.sensors or []:
         for service in sensor.services:
@@ -675,13 +711,13 @@ def report(bridge, reset=False):
                 service.update()
                 log(service.prompt())
 
-            # Get the motion profile of the passed day
+            # Get the motion profile of the passed day (all sensors)
             if service.name == "motion":
                 for changed, value in service.data:
                     if value and changed.strftime(day_format) == today:
                         h = int(changed.strftime("%H"))
                         m = int(changed.strftime("%M"))
-                        plot_index = h*4 + m//15   # plot_index = h*n//24 + m//(60//(n//24))
+                        plot_index = h*4 + m//15   # plot_index = h*n//24 + m//(60//(n//24)), n = 96, 288, 720 (for 15min, 5min, 1min interval)
                         plot[plot_index] = high_chr
 
     # Plot the motion profile
@@ -697,9 +733,9 @@ def report(bridge, reset=False):
     attachment = {
         "maintype": "image",
         "subtype":  "png",
-        "cid": cid,
-        "path": filename,
-        "data": img_data
+        "cid":      cid,
+        "path":     filename,
+        "data":     img_data
     }
     attachments.append(attachment)
 
@@ -711,25 +747,14 @@ def report(bridge, reset=False):
 
     # Transform collected sensor data into DataFrame, CSV format
     for sensor in bridge.sensors:
-        service_dict = {}
         cid = None
-        maxlen = 0
+
+        df = sensor_data2df(sensor)
+
+        columns = [column for column in list(df) if column != REPORTsettings["source"]]
+        html_table = df.to_html(index=False, header=True, na_rep='', border=0, columns=columns)
 
         for service in sensor.services:
-            if service.name == "device_power":
-                continue
-
-            if service.unit:
-                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data]
-            else:
-                service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data]
-
-            # Cleanup: use only items of today
-            service_dict[service.description] = [item for item in service_dict[service.description] if item.startswith(today)]
-
-            if len(service_dict[service.description]) > maxlen:
-                maxlen = len(service_dict[service.description])
-
             if service.name == "temperature":
                 try:
                     filename = f"{sensor.name} {service.description}.png"
@@ -741,21 +766,15 @@ def report(bridge, reset=False):
                     attachment = {
                         "maintype": "image",
                         "subtype":  "png",
-                        "cid": cid, #place in comment to make this an attachment
-                        "path": filename,
-                        "data": img_data
+                        "cid":      cid,
+                        "path":     filename,
+                        "data":     img_data
                     }
                     attachments.append(attachment)
 
                 except:
                     cid = None
 
-        service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
-        column_headers = list(service_dict.keys())
-
-        df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
-
-        html_table = df.to_html(index=False, header=True, na_rep='', border=0, columns=column_headers[:-1])
         if cid:
             html_table += \
 f"""
@@ -796,29 +815,9 @@ f"""
                         file_path = os.path.join(DATAsettings["store"], file_path)
 
                     if os.path.isfile(file_path):
-                        if service.last_saved:
-                            maxlen = 0
-
-                            for service in sensor.services:
-                                if service.name == "device_power":
-                                    continue
-
-                                if service.unit:
-                                    service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']} {service.unit}" for changed, value in service.data if changed > service.last_saved]
-                                else:
-                                    service_dict[service.description] = [f"{changed.strftime(date_out_format)} {value if not isinstance(value, bool) else REPORTsettings['on'] if value else REPORTsettings['off']}" for changed, value in service.data if changed > service.last_saved]
-
-                                # Cleanup: use only items of today
-                                #service_dict[service.description] = [item for item in service_dict[service.description] if item.startswith(today)]
-
-                                if len(service_dict[service.description]) > maxlen:
-                                    maxlen = len(service_dict[service.description])
-
-                            service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
-
-                            df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
-
+                        df = sensor_data2df(sensor, update=True)
                         df.to_csv(file_path, mode='a', sep='\t', index=False, header=False)
+
                     else:
                         df.to_csv(file_path, sep='\t', index=False, header=True)
 
@@ -1243,7 +1242,8 @@ def check(ip):
     try:
         requests.head(f"http://{ip}", timeout=1)
         return True
-    except requests.ConnectionError:
+
+    except (requests.ConnectionError, requests.Timeout):
         return False
 
 
@@ -1265,7 +1265,7 @@ def read_csv(bridge):
             if not os.path.isfile(file_path):
                 return
 
-        df = pd.read_csv(file_path, sep="\t")
+        df = pd.read_csv(file_path, sep="\t", na_filter=False)
 
         for service in sensor.services:
             if service.name == "device_power":
@@ -1295,6 +1295,9 @@ def read_csv(bridge):
 
                 log("data_read_success", argument=f"{sensor.name}:{service.description}")
 
+            else:
+                log("no_data", argument=f"{sensor.name}:{service.description}")
+
 
 if __name__ == "__main__":
     # Read settings from config file
@@ -1304,7 +1307,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     start_time = time.time()
-    while int(time.time() - start_time) < 20:
+    while int(time.time() - start_time) < 30:
         if isOpen(HUEsettings["ip"], 80, 1):
             break
         else:
@@ -1324,6 +1327,10 @@ if __name__ == "__main__":
 
     if not check(HUEsettings["ip"]):
         log("no_response")
+
+        # Wait a minute before exiting with error
+        time.sleep(60)
+
         sys.exit(1)
 
     try:
