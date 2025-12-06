@@ -900,7 +900,7 @@ class Bridge():
 
     def __username(self):
         # if no user name /API key is specified, we'll create one
-        url = f"https://{self.IP}/api"
+        url = f"https://{self.ip}/api"
         my_obj = {
             "devicetype": "app_name#instance_name",
             "generateclientkey": True
