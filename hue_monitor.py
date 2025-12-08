@@ -15,6 +15,7 @@ import signal
 import datetime
 import io
 
+#install with sudo pip3 install pandas or sudo apt install python3-pandas
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -162,7 +163,10 @@ LOGsettings = {
     "no_response":       "No response or no IP address",
     "data_read_success": "Successfully read saved data for service {}",
     "data_read_failed":  "Reading saved data for service {} failed",
-    "no_data":           "No saved data for service {}"
+    "no_data":           "No saved data for service {}",
+    "ip_discovery":      "Starting discovery of ip address ... ",
+    "ip_discovered":     "IP address discovered: {}",
+    "no_update_service": "Failed to update service {}"
 }
 
 REPORTsettings = {
@@ -374,14 +378,36 @@ def read_sensor_config(sensor_name):
     return settings
 
 
-def save_key(config, key):
-    config.set("Hue Bridge", "key", key)
+def save_config(config, key, value):
+    config.set("Hue Bridge", key, value)
 
     try:
         with open(config_file, 'w') as configfile:
             config.write(configfile)
     except Exception as e:
         log("cfg_write_error", argument=e)
+
+
+def save_key(config, key):
+    save_config(config, "key", key)
+    #config.set("Hue Bridge", "key", key)
+
+    #try:
+    #    with open(config_file, 'w') as configfile:
+    #        config.write(configfile)
+    #except Exception as e:
+    #    log("cfg_write_error", argument=e)
+
+
+def save_ip(config, ip):
+    save_config(config, "ip", ip)
+    #config.set("Hue Bridge", "ip", ip)
+
+    #try:
+    #    with open(config_file, 'w') as configfile:
+    #        config.write(configfile)
+    #except Exception as e:
+    #    log("cfg_write_error", argument=e)
 
 
 def log(message, argument=None):
@@ -690,6 +716,8 @@ def sensor_data2df(sensor, update=False):
 
     service_dict[REPORTsettings["source"]] = [sensor.name for i in range(0, maxlen)]
 
+    # Specify dtype explicitly to avoid warning
+    #df = pd.DataFrame({key:pd.Series(value, dtype='float64') for key, value in service_dict.items()})
     df = pd.DataFrame({key:pd.Series(value) for key, value in service_dict.items()})
 
     return df
@@ -974,7 +1002,8 @@ class Bridge():
         with requests.Session() as session:
             while(True):
                 try:
-                    response = session.get(url, headers=headers, timeout=86400, stream=True, verify=False)
+                    #How to detect if the session has stalled (e.g., after bridge reboot). Reduce timeout from 24h(86400) to maybe 1m(60)?
+                    response = session.get(url, headers=headers, timeout=60, stream=True, verify=False)
 
                     if response and response.status_code == 200:
                         for line in response.iter_lines():
@@ -1024,25 +1053,22 @@ class Bridge():
                     else:
                         log("invalid_response", argument=url)
 
-                except requests.exceptions.ConnectionError:
-                    raise
-
-                except requests.exceptions.Timeout as e:
-                    log("timeout", argument=e)
-                    continue
-
-                except requests.exceptions.RequestException as e:
-                    if "timed out" in str(e):
-                        log("timeout", argument=url)
-                        continue
-                    else:
-                        raise
-
                 except KeyError:
                     pass
 
                 except KeyboardInterrupt:
                     break
+
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
+                    if "timed out" in str(e):
+                        #log("timeout", argument=url)
+                        continue
+                    else:
+                        #break
+                        raise
+
+                except:
+                    raise
 
 
 class Sensor():
@@ -1089,7 +1115,8 @@ class Sensor():
                 log("invalid_response", argument=url)
 
         except Exception as e:
-            log("exception", e)
+            log("exception", argument=type(e).__name__)
+            #log("exception", e)
             pass
 
         return service_list
@@ -1150,7 +1177,8 @@ class Service():
                 log("invalid_response", argument=self.__url)
 
         except Exception as e:
-            log("exception", argument=e)
+            log("exception", argument=type(e).__name__)
+            #log("exception", argument=e)
 
         return enabled
 
@@ -1168,7 +1196,8 @@ class Service():
                 log("invalid_response", argument=self.__url)
 
         except Exception as e:
-            log("exception", argument=e)
+            log("exception", argument=type(e).__name__)
+            #log("exception", argument=e)
 
         return False
 
@@ -1201,7 +1230,9 @@ class Service():
                     return
 
             except Exception as e:
-                log("exception", argument=e)
+                log("exception", argument=type(e).__name__)
+                #log("exception", argument=e)
+                log("no_update_service", argument=self.name)
                 return
 
         if not self.data or changed > self.data[-1][0]:
@@ -1313,15 +1344,18 @@ if __name__ == "__main__":
         else:
             time.sleep(5)
 
-    if not check(HUEsettings["ip"]):
+    if not HUEsettings["ip"] or not check(HUEsettings["ip"]):
+        log("ip_discovery")
         try:
             response = requests.get("https://discovery.meethue.com/", verify=False)
 
             if response and response.status_code == 200:
                 data = response.json()[0]
                 if "internalipaddress" in data.keys():
+                    # If a new ip address was found, save it to the ini file
+                    log("ip_discovered", argument=data["internalipaddress"])
+                    save_ip(cfg, data["internalipaddress"])
                     HUEsettings["ip"] = data["internalipaddress"]
-
         except:
             pass
 
@@ -1337,7 +1371,7 @@ if __name__ == "__main__":
         # Instantiate our bridge
         bridge = Bridge(HUEsettings["ip"], username=HUEsettings["key"], onchange=on_change)
 
-        # If a new key was created, save it in the ini file
+        # If a new key was created, save it to the ini file
         if not HUEsettings["key"]:
             save_key(cfg, bridge.username)
             HUEsettings["key"] = bridge.username
@@ -1371,7 +1405,8 @@ if __name__ == "__main__":
         bridge.events()
 
     except Exception as e:
-        log("exception", argument=e)
+        log("exception", argument=type(e).__name__)
+        #log("exception", argument=e)
         sys.exit(1)
 
     finally:
@@ -1382,4 +1417,3 @@ if __name__ == "__main__":
             timer.cancel()
         except:
             pass
-
