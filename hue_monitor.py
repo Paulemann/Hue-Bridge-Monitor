@@ -36,11 +36,19 @@ from email.message import EmailMessage
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 #
-# Set default font sizes for plots (via matplotlib)
+# Font sizes for plots (via matplotlib)
 #
 SMALL_SIZE = 8
 MEDIUM_SIZE = 10
 BIGGER_SIZE = 12
+
+#
+# Events:
+# Maxiumum retry attempts, connection timeoutin secs  and time to wait in secs before retry attempt
+#
+MAXRETRIES = 5
+WAITTIME = 60
+TIMEOUT = 60
 
 plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
 plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
@@ -55,11 +63,11 @@ mtime_format = mdates.DateFormatter("%H:%M")
 #
 # Handle SIGTERM signal
 #
-def sigterm_handler(_signo, _stack_frame):
-    sys.exit(0)
+#def sigterm_handler(_signo, _stack_frame):
+#    sys.exit(0)
 
-signal.signal(signal.SIGINT, sigterm_handler)
-signal.signal(signal.SIGTERM, sigterm_handler)
+#signal.signal(signal.SIGINT, sigterm_handler)
+#signal.signal(signal.SIGTERM, sigterm_handler)
 
 #
 # Motion profile has 24 hrs. with a 15 min. time grid
@@ -1000,10 +1008,10 @@ class Bridge():
             }
 
         with requests.Session() as session:
-            while(True):
+            retries = MAXRETRIES
+            while(retries):
                 try:
-                    #How to detect if the session has stalled (e.g., after bridge reboot). Reduce timeout from 24h(86400) to maybe 1m(60)?
-                    response = session.get(url, headers=headers, timeout=60, stream=True, verify=False)
+                    response = session.get(url, headers=headers, timeout=TIMEOUT, stream=True, verify=False)
 
                     if response and response.status_code == 200:
                         for line in response.iter_lines():
@@ -1049,9 +1057,11 @@ class Bridge():
 
                                     service.update(changed, value)
                                     log(service.prompt())
-
                     else:
                         log("invalid_response", argument=url)
+
+                    # Reset retry counter after successful request
+                    retries = MAXRETRIES
 
                 except KeyError:
                     pass
@@ -1059,13 +1069,19 @@ class Bridge():
                 except KeyboardInterrupt:
                     break
 
+                # recommended reading: https://oxylabs.io/blog/python-requests-timeout
                 except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException) as e:
                     if "timed out" in str(e):
                         #log("timeout", argument=url)
                         continue
                     else:
-                        #break
-                        raise
+                        retries -= 1
+
+                        if retries:
+                            time.sleep(WAITTIME)
+                            continue
+                        else: # raise the exception when max attempts were made
+                            raise
 
                 except:
                     raise
@@ -1361,10 +1377,6 @@ if __name__ == "__main__":
 
     if not check(HUEsettings["ip"]):
         log("no_response")
-
-        # Wait a minute before exiting with error
-        time.sleep(60)
-
         sys.exit(1)
 
     try:
@@ -1417,3 +1429,5 @@ if __name__ == "__main__":
             timer.cancel()
         except:
             pass
+
+    sys.exit(0)
