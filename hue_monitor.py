@@ -174,7 +174,11 @@ LOGsettings = {
     "no_data":           "No saved data for service {}",
     "ip_discovery":      "Starting discovery of ip address ... ",
     "ip_discovered":     "IP address discovered: {}",
-    "no_update_service": "Failed to update service {}"
+    "no_update_service": "Failed to update service {}",
+    "monitor_started":   "The monitoring service has started",
+    "monitor_not_ready": "The Hue Bridge is not reachable. The monitoring service was stopped",
+    "monitor_failed":    "The monitoring service stopped due to an expected  error ({})",
+    "monitor_stopped":   "The monitoring service was stopped by the user or by the system"
 }
 
 REPORTsettings = {
@@ -884,34 +888,37 @@ f"""
                 service.reset()
 
 
+def notify_me(target, subject, message, logging=True):
+    try:
+        if target and not isinstance(target, list):
+            headers = {
+                "Title": subject
+            }
+            #auth_string= f"{username}:{password}"
+            #headers["Authorization"] = "Basic " + base64.b64encode(auth_string.encode()).decode()
+            r = requests.post(target, data=message, headers=headers)
+            r.raise_for_status()
+        elif target:
+            sendmail(target, subject, message)
+        elif DATAsettings["report_to"]:
+            sendmail(DATAsettings["report_to"], subject, message)
+
+        if logging:
+            log("msg_sent")
+
+    except Exception as e:
+        if logging:
+            log("msg_failed", argument=e)
+
+
 def on_change(bridge, sensor, service, changed, value):
     if service.name == 'motion' and value:
         log("motion_detected", argument=sensor.name)
         if sensor.settings["notify"]:
-
             # Send alert message if no exceptions apply
             if not check_date(changed.strftime(date_out_format), sensor.settings["except"]) and not check_date(changed.strftime(time_format), sensor.settings["except_daily"], daily=True):
                 msg_text = sensor.settings["notify_text"].format(sensor.name, changed.strftime(time_format))
-
-                try:
-                    if sensor.settings["notify_to"] and not isinstance(sensor.settings["notify_to"], list):
-                        headers = {
-                            "Title": sensor.settings["notify_subject"]
-                        }
-                        #auth_string= f"{username}:{password}"
-                        #headers["Authorization"] = "Basic " + base64.b64encode(auth_string.encode()).decode()
-                        r = requests.post(sensor.settings["notify_to"], data=msg_text, headers=headers)
-                        r.raise_for_status()
-                    elif sensor.settings["notify_to"]:
-                        sendmail(sensor.settings["notify_to"], sensor.settings["notify_subject"], msg_text)
-                    elif DATAsettings["report_to"]:
-                        sendmail(DATAsettings["report_to"], sensor.settings["notify_subject"], msg_text)
-
-                    log("msg_sent")
-
-                except Exception as e:
-                    log("msg_failed", argument=e)
-
+                notify_me(sensor.settings["notify_to"], sensor.settings["notify_subject"], msg_text)
             else:
                 log("msg_restricted")
 
@@ -1353,6 +1360,8 @@ if __name__ == "__main__":
         log("no_config")
         sys.exit(0)
 
+    notify_me(MOTIONsettings["notify_to"], MOTIONsettings["notify_subject"], LOGsettings["monitor_started"], logging=False)
+
     start_time = time.time()
     while int(time.time() - start_time) < 30:
         if isOpen(HUEsettings["ip"], 80, 1):
@@ -1377,6 +1386,7 @@ if __name__ == "__main__":
 
     if not check(HUEsettings["ip"]):
         log("no_response")
+        notify_me(MOTIONsettings["notify_to"], MOTIONsettings["notify_subject"], LOGsettings["monitor_not_ready"], logging=False)
         sys.exit(1)
 
     try:
@@ -1419,6 +1429,7 @@ if __name__ == "__main__":
     except Exception as e:
         log("exception", argument=type(e).__name__)
         #log("exception", argument=e)
+        notify_me(MOTIONsettings["notify_to"], MOTIONsettings["notify_subject"], LOGsettings["monitor_failed"].format(type(e).__name__), logging=False)
         sys.exit(1)
 
     finally:
@@ -1430,4 +1441,5 @@ if __name__ == "__main__":
         except:
             pass
 
+    notify_me(MOTIONsettings["notify_to"], MOTIONsettings["notify_subject"], LOGsettings["monitor_stopped"], logging=False)
     sys.exit(0)

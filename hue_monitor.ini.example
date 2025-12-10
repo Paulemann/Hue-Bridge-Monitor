@@ -16,7 +16,7 @@ store = Reports
 
 [Motion Alert]
 notify = yes
-notify_to = https://ntfy.sh/jdjbkjlha
+notify_to = https://ntfy.sh/notify_me
 notify_subject = Bewegungsalarm
 notify_text = Der {}-Sensor hat um {} Uhr eine Bewegung erkannt.
 except = 19.12.25 16:00 - 21.12.25 10:00, 27.12.25 16:00 - 01.01.26 10:00
@@ -47,6 +47,10 @@ no_data = Keine gespeicherten Daten für Service {}
 ip_discovery = Starte Suche nach IP-Addresse ...
 ip_discovered = Gefundene IP-Adresse: {}
 no_update_service = Aktualisierung für Service {} fehlgeschlagen
+monitor_started = Der Monitoring-Dienst wurde gestartet
+monitor_not_ready = Die Hue Bridge ist nicht erreichbar. Der Monitoring-Dienst wird beendet
+monitor_failed = Der Monitoring-Dienst wird aufgrund eines unerwarteten Fehlers ({}) beendet
+monitor_stopped = Der Monitoring-Dienst wurde durch den Benutzer oder durch das System beendet
 
 [Reporting]
 report_subject = Täglicher Bericht - Sensordaten
