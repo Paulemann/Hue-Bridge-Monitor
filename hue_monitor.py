@@ -44,7 +44,7 @@ BIGGER_SIZE = 12
 
 #
 # Events:
-# Maxiumum retry attempts, connection timeoutin secs  and time to wait in secs before retry attempt
+# Maxiumum retry attempts, connection timeout in secs and time to wait in secs before retry attempt
 #
 MAXRETRIES = 5
 WAITTIME = 60
@@ -63,11 +63,11 @@ mtime_format = mdates.DateFormatter("%H:%M")
 #
 # Handle SIGTERM signal
 #
-#def sigterm_handler(_signo, _stack_frame):
-#    sys.exit(0)
+def sigterm_handler(_signo, _stack_frame):
+    sys.exit(0)
 
-#signal.signal(signal.SIGINT, sigterm_handler)
-#signal.signal(signal.SIGTERM, sigterm_handler)
+signal.signal(signal.SIGINT, sigterm_handler)
+signal.signal(signal.SIGTERM, sigterm_handler)
 
 #
 # Motion profile has 24 hrs. with a 15 min. time grid
@@ -739,7 +739,7 @@ def report(bridge, reset=False):
     # Start with an empty list of attachments
     attachments = []
 
-    log(today)
+    log(REPORTsettings["report_header"].format(today))
 
     plot = list(96*low_chr)
     #plot = [high_chr if x else low_chr for x in lista] when lista = [False, True, True, False, False, ...]
