@@ -58,8 +58,6 @@ plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
 plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
-mtime_format = mdates.DateFormatter("%H:%M")
-
 #
 # Handle SIGTERM signal
 #
@@ -261,6 +259,7 @@ def isOpen(ip, port, timeout=3):
 
     finally:
         s.close()
+
 
 def read_config():
     if not os.path.exists(config_file):
@@ -587,9 +586,10 @@ def service_profile(service_data, title, filename=None):
     plt.figure().set_figheight(2.2)
     plt.plot(x_values, y_values)
 
-    # Use fixed limits on y-axis / autoscale off
+    # Use fixed limits on x-axis / autoscale off
     left = datetime.datetime.strptime(today, day_format)
-    right = left.replace(hour=23, minute=59, second=59, microsecond=0)
+    #right = left.replace(hour=23, minute=59, second=59, microsecond=0)
+    right = left + datetime.timedelta(days=1) # to print last/24:00 tick on x-axis
     plt.xlim(left=left, right=right)
 
     # Use no margins
@@ -616,8 +616,11 @@ def service_profile(service_data, title, filename=None):
     aspect = .25/range
     ax.set_aspect(aspect)
 
+    # Set tick marks interval
+    #ax.xaxis.set_major_locator(md.HourLocator(interval = 3))
     # Use custom time format
-    ax.xaxis.set_major_formatter(mtime_format)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+
 
     # Save as PNG file (or write to IOBuffer)
     if filename:
@@ -638,34 +641,26 @@ def service_profile(service_data, title, filename=None):
 def motion_profile(plotdata, filename=None):
     # Create motion profile (all sensors) in PNG format
 
-    today0 = datetime.datetime.strptime(today, day_format)
-
-    x_labels = [(today0 + datetime.timedelta(minutes=15*n)).strftime("%H:%M") for n in range(0, 96)]
-    x_pos    = [n for n in range(0, 96)]
-
     y_values = [1 if c == high_chr else 0 for c in plotdata]
 
-    # Add 24:00 data point for better readability
-    #x_labels.append("24:00")
-    #x_pos.append(96)
-    #y_values.append(0)
+    plt.xlim(left=0, right=len(y_values)) # right = 95 + 1 to include 24:00
 
     # Set figure height to 1.6 inches only
     plt.figure().set_figheight(1.6)
-    plt.bar(x_pos, y_values, width=1, align="edge")
+    plt.bar(range(0, len(y_values)), y_values, width=1, align="edge")
 
-    # Print labels below x-axis, eevry 3 hrs (96/24 * 3 = 12)
-    plt.xticks(x_pos[0::12], x_labels[0::12], size=SMALL_SIZE)
+    # Print labels below x-axis, eevry 3 hrs (96/24 * 3 = 12), add one for 24:00
+    today0 = datetime.datetime.strptime(today, day_format)
+    x_labels = [(today0 + datetime.timedelta(minutes=15*n)).strftime("%H:%M") for n in range(0, len(y_values) + 1)]
+    plt.xticks(range(0, len(x_labels), 12), x_labels[0::12], size=SMALL_SIZE)
 
     # Use fixed limits on y-axis / autoscale off
     plt.ylim(bottom=0, top=1)
 
-    # Y-axis labels should only be "0" and "1" (or "off" and "on")
-    y_labels = ["0", "1"]
-    y_pos    = [0, 1]
-
     # Print labels left beside y-axis
-    plt.yticks(y_pos, y_labels, size=SMALL_SIZE)
+    #y_labels = ["0", "1"]
+    y_labels = [REPORTsettings["off"], REPORTsettings["on"]]
+    plt.yticks(range(0, len(y_labels)), y_labels, size=SMALL_SIZE)
 
     # Use no margins
     #plt.margins(x=0, y=0, tight=False)
@@ -683,6 +678,72 @@ def motion_profile(plotdata, filename=None):
 
     # Set axis aspect ratio
     ax.set_aspect(12.0)
+
+    # Save as PNG file (or write to IOBuffer)
+    if filename:
+        plt.savefig(filename)
+        img_data = None
+
+    else:
+        with io.BytesIO() as buf:  # use buffer memory
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            img_data = buf.getvalue()
+
+    plt.close()
+
+    return img_data
+
+
+def motion_profile_new(plotdata, filename=None):
+    # Create motion profile (all sensors) in PNG format
+
+    today0 = datetime.datetime.strptime(today, day_format)
+
+    y_values = [1 if c == high_chr else 0 for c in plotdata]
+    x_values = [today0 + datetime.timedelta(minutes=15*n) for n in range(0, len(y_values))]
+
+    # Set figure height to 1.6 inches only
+    plt.figure().set_figheight(1.6)
+    #plt.bar(x_values, y_values, width=datetime.timedelta(minutes=15), align="edge")
+    #plt.bar(x_values, y_values, width=datetime.timedelta(minutes=15), color="C0", edgecolor="C0", linewidth=0.5, align="edge")
+    plt.bar(x_values, y_values, width=1.001 * datetime.timedelta(minutes=15), align="edge")
+
+    # Use fixed limits on x-axis / autoscale off
+    left = datetime.datetime.strptime(today, day_format) # = today0
+    #right = left.replace(hour=23, minute=59, second=59, microsecond=0)
+    right = left + datetime.timedelta(days=1) # to print last/24:00 tick on x-axis
+    plt.xlim(left=left, right=right)
+
+    # Use no margins
+    #plt.margins(x=0, y=0, tight=False)
+    plt.autoscale(enable=None, axis="x", tight=True)
+
+    # Use fixed limits on y-axis / autoscale off
+    plt.ylim(bottom=0, top=1)
+
+    # Print labels left beside y-axis
+    #y_labels = ["0", "1"]
+    y_labels = [REPORTsettings["off"], REPORTsettings["on"]]
+    plt.yticks(range(0, len(y_labels)), y_labels, size=SMALL_SIZE)
+
+    #plt.xlabel("Time", size=SMALL_SIZE)
+    #plt.ylabel("Motion", size=SMALL_SIZE)
+    plt.title(REPORTsettings["motion_profile"], size=MEDIUM_SIZE, pad=20)
+
+    ax = plt.gca()
+
+    # Don't show the top and right border
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # Set axis aspect ratio
+    ax.set_aspect(.15)
+
+    # Set tick marks interval
+    #ax.xaxis.set_major_locator(md.HourLocator(interval = 3))
+    # Use custom time format
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
     # Save as PNG file (or write to IOBuffer)
     if filename:
