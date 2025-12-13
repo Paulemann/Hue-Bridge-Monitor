@@ -30,6 +30,8 @@ from email.utils import formataddr, make_msgid
 from email.header import Header
 from email.message import EmailMessage
 
+from zeroconf import ServiceBrowser, Zeroconf, ServiceListener
+
 #
 # Suppress only the single warning from urllib3 needed.
 #
@@ -1354,6 +1356,9 @@ def timer_event(bridge):
 
 
 def check(ip):
+    if not ip:
+        return False
+
     try:
         requests.head(f"http://{ip}", timeout=1)
         return True
@@ -1414,6 +1419,44 @@ def read_csv(bridge):
                 log("no_data", argument=f"{sensor.name}:{service.description}")
 
 
+def find_hue_ip():
+
+    class MyListener(ServiceListener):
+
+        def __init__(self):
+            self.service_ip = None
+
+        def update_service(self, zeroconf, service_type, name):
+            pass
+
+        def remove_service(self, zeroconf, service_type, name):
+            pass
+
+        def add_service(self, zeroconf, service_type, name):
+            info = zeroconf.get_service_info(service_type, name)
+
+            if info:
+                addresses = info.parsed_addresses()
+                if addresses:
+                    self.service_ip = addresses[0]
+
+    zeroconf = Zeroconf()
+    listener = MyListener()
+
+    try:
+        ServiceBrowser(zeroconf, "_hue._tcp.local.", listener)
+
+        retries = 100
+        while not listener.service_ip and retries:
+            time.sleep(.1)
+            retries -= 1
+
+    finally:
+        zeroconf.close()
+
+    return listener.service_ip
+
+
 if __name__ == "__main__":
     # Read settings from config file
     cfg = read_config()
@@ -1430,7 +1473,7 @@ if __name__ == "__main__":
         else:
             time.sleep(5)
 
-    if not HUEsettings["ip"] or not check(HUEsettings["ip"]):
+    if not check(HUEsettings["ip"]):
         log("ip_discovery")
         try:
             response = requests.get("https://discovery.meethue.com/", verify=False)
@@ -1444,6 +1487,15 @@ if __name__ == "__main__":
                     HUEsettings["ip"] = data["internalipaddress"]
         except:
             pass
+
+    if not check(HUEsettings["ip"]):
+        log("ip_discovery")
+        ip_address = find_hue_ip()
+
+        if ip_address:
+            log("ip_discovered", argument=ip_address)
+            save_ip(cfg, ip_address)
+            HUEsettings["ip"] = ip_address
 
     if not check(HUEsettings["ip"]):
         log("no_response")
